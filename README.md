@@ -1,10 +1,18 @@
 # DB-Mind (Azure Demo)
 
-DB-Mind is an authenticated English/German chatbot for maintenance analytics over
-**entirely fictional data**: nine tables and 3,390 rows. Explore work-order status,
-downtime, repair time, parts use, and maintenance plans. Ambiguous metrics and date
-windows trigger clarification; follow-up questions and feedback support refinement.
-Results include a table and expandable SQL.
+DB-Mind is an English/German conversational SQL system based on a multi-agent
+architecture: clarify a question, select schema, generate and validate a read
+query, then refine the results through feedback. **The DB-Mind idea is not limited
+to maintenance or one database**: the architecture can be adapted to SQL databases
+in other domains through dialect-specific adapters and schema discovery.
+
+This repository is a safety-constrained demonstration over **entirely fictional
+maintenance data**: nine tables and 3,390 rows. The implemented transports are
+SQLite and SQL Server/Azure SQL; this release intentionally requires the approved
+synthetic fixture. It is **not yet a plug-and-play connector for arbitrary SQL
+databases**. PostgreSQL, MySQL and other engines need adapters and tests. See
+[using your own database](docs/own-database-setup.md) for initial schema/sample
+extraction and the changes needed for a different schema.
 
 [Hosted private demonstration](https://dbmind-demo.lemonflower-af0fa12b.southafricanorth.azurecontainerapps.io)
 requires an invited account. [Deployment report](docs/deployment-report.md) records
@@ -12,16 +20,29 @@ observed acceptance checks, resource costs, and remaining operator steps.
 
 ```mermaid
 flowchart LR
-    User[Authenticated Gradio chat] --> Clarify[Clarification]
-    Clarify --> Schema[Schema selection]
-    Cache[Bounded metadata and samples] --> Schema
-    Schema --> Generate[SQL generation]
-    Generate --> Guard[Read-only SQL and identity guards]
-    Guard --> SQL[Azure SQL synthetic database]
-    SQL --> Results[Results and follow-up feedback]
-    DeepSeek[DeepSeek with bounded calls] --> Clarify
-    DeepSeek --> Generate
+    User[Authenticated user] --> FD[Front Desk: clarify]
+    DB[(Configured SQL database)] --> Discovery[Explicit schema and bounded sample extraction]
+    Discovery --> Cache[Validated local snapshot]
+    Cache --> FD
+    FD --> SR[Schema Retriever]
+    Cache --> SR
+    SR --> CG[Candidate Generator]
+    CG --> V[Validator: read-only SQL and identity guards]
+    V --> DB
+    V --> Results[Results]
+    Results --> FA[Feedback: interpret latest request]
+    User --> FA
+    FA -->|Revised question and prior query context| CG
+    CG -->|Follow-up proposal| Review[User review: /execute]
+    Review --> V
+    V -->|Query error: bounded repair| AN[Analyzer]
+    AN --> Review
 ```
+
+The database box represents the architecture's integration boundary. The hosted
+implementation uses the approved Azure SQL synthetic fixture. Follow-up changes
+now pass through Feedback → CG → Validator; Analyzer repairs require fresh review.
+
 
 Azure Container Apps serves the private UI over HTTPS with one replica. Managed
 identity pulls the immutable image from ACR. ODBC Driver 18 uses verified TLS and
@@ -79,7 +100,7 @@ read gates, blocked file routes, quotas, and cancellation.
 
 ## Verification and limitations
 
-The clean checkout passes **91 offline tests**, covering real SQLite/HTTP behavior
+The clean checkout passes **115 offline tests**, covering real SQLite/HTTP behavior
 and mocked provider/security failures. Checks inside the hosted Container App
 confirmed nine Azure SQL tables, complete metadata and sampling, equipment count
 60, and the restricted reader guard passing. HTTPS readiness returned 200;
@@ -115,7 +136,7 @@ blocked Gradio file routes. No new license or ownership grant is inferred.
 
 ### Recruiter demo sessions
 
-Authenticated browsers receive an opaque, HttpOnly, same-site visit cookie. Each
+Authenticated browsers receive an opaque, HttpOnly, same-site visit cookie. Each demo
 visit has a fixed 30-minute deadline from its first authenticated page request.
 Reloads, activity, new tabs and “New question” do not extend that deadline. At
 expiry the page displays: “Your 30-minute demo session has ended. Please contact
@@ -161,3 +182,37 @@ is a new proposal requiring another `/execute`, and the original result remains
 visible until a revised read succeeds. Empty results and connectivity failures
 do not invoke repair. This engineering demo's bounded checks are not thesis
 accuracy scores or a claim of complete semantic validation.
+
+### Private operator/admin access
+
+An optional **application admin** account lets the owner test repeatedly without
+the 30-minute visit deadline or individual question/model-call allowances. It is
+not a database administrator and gets no additional SQL permissions or management
+routes. All read-only/identity/file-route guards, technical HTTP rate limits,
+queue limits, per-question budgets and the shared daily model-call cap still apply.
+There is no admin password by default and a username alone grants no privilege.
+
+Configure a separate account in your private environment/secret store:
+
+```bash
+export APP_ADMIN_USERNAME=admin
+read -rsp 'Separate admin password (12+ characters): ' APP_ADMIN_PASSWORD
+export APP_ADMIN_PASSWORD
+```
+
+Keep the existing demo credentials separate. Passwords must be 12–256 characters;
+admin and demo usernames must differ. Restart the local process/container after
+changing environment variables. On Azure, bind `APP_ADMIN_PASSWORD` to a separate
+Container App secret and set `APP_ADMIN_USERNAME` in the revision environment;
+new code requires a new image/revision. The deployment template/script support
+these optional settings. Never put credentials in the README, Git, image or chat.
+
+Admin browser visits remain valid until the process restarts or credentials change;
+there is no fixed visit timeout. Use a separate private browser window for the admin
+account, and close it afterward. The `/demo/session` endpoint returns
+`remaining_seconds: null` for an authenticated admin. Demo visitors still expire
+at 30 minutes. The global provider allowance can still stop admin testing; this
+account does not provide unlimited paid model calls.
+
+See the [follow-up verification report](docs/followup-verification.md) for the
+six-month refinement fix and its live Azure evidence.

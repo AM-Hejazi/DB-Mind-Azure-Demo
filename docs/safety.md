@@ -94,3 +94,14 @@ Next: **Milestone 7 — focused Gradio UX, correct synthetic/dialect copy, progr
 ## Final migration update — 3 October 2026
 
 The final runtime is Gradio 6.29.1/client 2.7.2 with native private API visibility, tested HTTP/queue boundaries and no schema monkeypatch. Anonymous health probes expose only readiness memory and never contact SQL/LLM. Frozen injected settings, bounded stage streaming, compact Dataframe results and real desktop/mobile checks replace the original Milestone6 UI. See [migration-report.md](migration-report.md) for the current 77-test evidence, hashed dependency audit and Docker results; earlier milestone version/install descriptions are historical.
+
+## Optional application admin
+
+`APP_ADMIN_USERNAME` and `APP_ADMIN_PASSWORD` create a separate authenticated
+operator account. Both must be provided, with a unique username and a validated
+12–256-character password. No username, request header, JSON field or cookie can
+self-assign this role. Admin visits have no fixed deadline and bypass individual
+question/model-call demo allowances. The global model cap, per-question execution
+budgets, request rate, session ownership, queue bounds and all database/file-route
+guards remain enforced. This role grants no database administration. In-memory
+visits still become invalid after a process restart.
