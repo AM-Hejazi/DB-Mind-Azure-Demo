@@ -62,6 +62,14 @@
         "mock",
         "live"
       ]
+    },
+    "appAdminUsername": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "appAdminPassword": {
+      "type": "securestring",
+      "defaultValue": ""
     }
   },
   "variables": {
@@ -189,7 +197,7 @@
               "identity": "[parameters('identityId')]"
             }
           ],
-          "secrets": "[concat(createArray(createObject('name','private-auth','value',parameters('appAuth')),createObject('name','deepseek-key','value',parameters('deepseekKey'))),if(equals(parameters('dbAuth'),'sql_password'),createArray(createObject('name','sql-password','value',parameters('sqlPassword'))),json('[]')))]"
+          "secrets": "[concat(createArray(createObject('name','private-auth','value',parameters('appAuth')),createObject('name','deepseek-key','value',parameters('deepseekKey'))),if(equals(parameters('dbAuth'),'sql_password'),createArray(createObject('name','sql-password','value',parameters('sqlPassword'))),json('[]')),if(empty(parameters('appAdminUsername')),json('[]'),createArray(createObject('name','admin-password','value',parameters('appAdminPassword')))))]"
         },
         "template": {
           "containers": [
@@ -200,7 +208,7 @@
                 "cpu": 0.5,
                 "memory": "1Gi"
               },
-              "env": "[concat(variables('publicEnv'),if(equals(parameters('dbAuth'),'sql_password'),createArray(createObject('name','DB_PASSWORD','secretRef','sql-password')),json('[]')))]",
+              "env": "[concat(variables('publicEnv'),if(equals(parameters('dbAuth'),'sql_password'),createArray(createObject('name','DB_PASSWORD','secretRef','sql-password')),json('[]')),if(empty(parameters('appAdminUsername')),json('[]'),createArray(createObject('name','APP_ADMIN_USERNAME','value',parameters('appAdminUsername')),createObject('name','APP_ADMIN_PASSWORD','secretRef','admin-password'))))]",
               "probes": [
                 {
                   "type": "Startup",

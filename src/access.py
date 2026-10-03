@@ -33,6 +33,7 @@ class AccessSettings:
     max_sessions: int = 4
     session_ttl: int = 1800
     queue_size: int = 8
+    admins: tuple = ()
 
 
 def load_access_settings(environ=None):
@@ -49,6 +50,11 @@ def load_access_settings(environ=None):
             users.append(tuple(pair.split(':',1)))
     elif user or password:
         users.append((user,password))
+    admin_user, admin_password = env.get('APP_ADMIN_USERNAME',''), env.get('APP_ADMIN_PASSWORD','')
+    admins = ()
+    if admin_user or admin_password:
+        users.append((admin_user, admin_password))
+        admins = (admin_user,)
     if (len(users)>20 or len({u for u,_ in users}) != len(users) or
         any(not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',u) or len(p)<12 or len(p)>256 or
             any(ord(c)<32 for c in p) for u,p in users)):
@@ -62,7 +68,7 @@ def load_access_settings(environ=None):
         integer('APP_QUESTIONS_PER_DAY',10,1,30),integer('APP_MODEL_CALLS_PER_HOUR',24,1,100),
         integer('APP_GLOBAL_MODEL_CALLS_PER_DAY',120,1,500),integer('APP_REQUESTS_PER_HOUR',240,10,1000),
         integer('APP_MAX_SESSIONS_PER_USER',4,1,8),integer('APP_SESSION_TTL_SECONDS',1800,60,1800),
-        integer('APP_QUEUE_SIZE',8,1,16))
+        integer('APP_QUEUE_SIZE',8,1,16), admins)
 
 
 @dataclass
@@ -99,6 +105,10 @@ class AccessPolicy:
                      hmac.compare_digest(password.encode(),secret.encode())) or valid
         return user if valid else None
 
+    def is_admin(self, user):
+        # Only server configuration grants this role; browser claims never do.
+        return user in self.settings.admins and user in {u for u,_ in self.settings.users}
+
     def _reserve(self, key, limit, seconds):
         now=self.clock();events=self._events[key]
         while events and events[0]<=now-seconds:events.popleft()
@@ -107,12 +117,14 @@ class AccessPolicy:
 
     def visitor(self,user,token=None):
         """Opaque server-owned browser visit; expired tokens never renew on reload."""
+        if user not in {u for u,_ in self.settings.users}:
+            raise AccessError('Authenticated access is required')
         with self._lock:
             if token:
                 visit=self._visitors.get(token)
                 if not visit or visit[0]!=user:
                     raise AccessError(EXPIRED_MESSAGE)
-                if self.clock()>=visit[1]+self.settings.session_ttl:
+                if not self.is_admin(user) and self.clock()>=visit[1]+self.settings.session_ttl:
                     for key,session in list(self._sessions.items()):
                         if session.visitor==token:
                             budget=session.state.get('llm_budget')
@@ -145,7 +157,7 @@ class AccessPolicy:
             self.allowance_key(user,visitor)
             now=self.clock()
             for existing,session in list(self._sessions.items()):
-                if now-session.touched>self.settings.session_ttl and not session.lock.locked():
+                if not self.is_admin(session.owner) and now-session.touched>self.settings.session_ttl and not session.lock.locked():
                     budget=session.state.get('llm_budget')
                     if budget:budget.cancel()
                     del self._sessions[existing]
@@ -163,7 +175,9 @@ class AccessPolicy:
 
     def begin_question(self,user,visitor=None):
         with self._lock:
-            user=self.allowance_key(user,visitor)
+            key=self.allowance_key(user,visitor)
+            if self.is_admin(user):return
+            user=key
             # Check both windows before charging either; no partial reservation.
             now=self.clock()
             for key,limit,seconds in [(('question_hour',user),self.settings.questions_hour,3600),
@@ -177,8 +191,9 @@ class AccessPolicy:
     def charge(self,user,visitor=None):
         with self._lock:
             now=self.clock()
-            user=self.allowance_key(user,visitor)
-            keys=[(('calls',user),self.settings.calls_hour,3600),(('global_calls',),self.settings.global_calls_day,86400)]
+            key=self.allowance_key(user,visitor)
+            keys=[(('global_calls',),self.settings.global_calls_day,86400)]
+            if not self.is_admin(user):keys.insert(0,(('calls',key),self.settings.calls_hour,3600))
             for key,limit,seconds in keys:
                 events=self._events[key]
                 while events and events[0]<=now-seconds:events.popleft()
@@ -261,7 +276,8 @@ class SecureASGI:
         scope['dbmind_visit']=visitor
         # Timer polling does not consume the ordinary HTTP allowance.
         if scope.get('method')=='GET' and scope.get('path')=='/demo/session':
-            remaining=max(0,self.policy.settings.session_ttl-(self.policy.clock()-self.policy._visitors[visitor][1]))
+            remaining=(None if self.policy.is_admin(user) else
+                       max(0,self.policy.settings.session_ttl-(self.policy.clock()-self.policy._visitors[visitor][1])))
             return await self.reject(send,200,json.dumps({'remaining_seconds':remaining}))
         # Loading assets, config and refreshing the page must not exhaust actions.
         if scope.get('method') not in {'GET','HEAD'} or '/queue/' in scope.get('path',''):
