@@ -1,0 +1,348 @@
+{
+  "schema_version": 1,
+  "seed": 20261001,
+  "reference_date_utc": "2026-10-01T00:00:00Z",
+  "dataset_sha256": "240e3c4753a4ad55b720225a9ceb1a0cdef269f7015e7dab1a23a308317f4574",
+  "notice": "All records are original and fictional. Expected results computed locally with SQLite; SQL Server results not yet executed.",
+  "row_counts": {
+    "sites": 4,
+    "technicians": 12,
+    "equipment": 60,
+    "spare_parts": 18,
+    "work_orders": 1200,
+    "failure_events": 339,
+    "work_order_parts": 1697,
+    "maintenance_plans": 60,
+    "safety_incidents": 0
+  },
+  "cases": [
+    {
+      "id": "status_counts",
+      "question_en": "How many work orders have each status?",
+      "question_de": "Wie viele Arbeitsaufträge gibt es je Status?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT status, COUNT(*) AS work_order_count FROM work_orders GROUP BY status ORDER BY status",
+      "sql_sqlserver": "SELECT status, COUNT(*) AS work_order_count FROM [demo].work_orders GROUP BY status ORDER BY status",
+      "expected_columns": [
+        "status",
+        "work_order_count"
+      ],
+      "expected_rows": [
+        [
+          "cancelled",
+          120
+        ],
+        [
+          "completed",
+          840
+        ],
+        [
+          "in_progress",
+          120
+        ],
+        [
+          "open",
+          120
+        ]
+      ]
+    },
+    {
+      "id": "downtime_ranking",
+      "question_en": "Which five assets have the most recorded downtime from resolved failures?",
+      "question_de": "Welche fünf Anlagen haben die meiste erfasste Ausfallzeit aus behobenen Störungen?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT e.asset_code, SUM(f.downtime_minutes) AS downtime_minutes FROM equipment e JOIN failure_events f ON f.equipment_id=e.equipment_id WHERE f.downtime_minutes IS NOT NULL GROUP BY e.asset_code ORDER BY downtime_minutes DESC, e.asset_code LIMIT 5",
+      "sql_sqlserver": "SELECT TOP (5) e.asset_code, SUM(f.downtime_minutes) AS downtime_minutes FROM [demo].equipment e JOIN [demo].failure_events f ON f.equipment_id=e.equipment_id WHERE f.downtime_minutes IS NOT NULL GROUP BY e.asset_code ORDER BY downtime_minutes DESC, e.asset_code",
+      "expected_columns": [
+        "asset_code",
+        "downtime_minutes"
+      ],
+      "expected_rows": [
+        [
+          "SYN-EQ-005",
+          2757
+        ],
+        [
+          "SYN-EQ-055",
+          2522
+        ],
+        [
+          "SYN-EQ-029",
+          2092
+        ],
+        [
+          "SYN-EQ-010",
+          1917
+        ],
+        [
+          "SYN-EQ-020",
+          1866
+        ]
+      ]
+    },
+    {
+      "id": "september_labor",
+      "question_en": "How many recorded labor minutes did each site spend on work orders completed in September 2026?",
+      "question_de": "Wie viele erfasste Arbeitsminuten entfielen je Standort auf im September 2026 abgeschlossene Aufträge?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT s.site_name, SUM(w.labor_minutes) AS labor_minutes FROM sites s JOIN equipment e ON e.site_id=s.site_id JOIN work_orders w ON w.equipment_id=e.equipment_id WHERE w.completed_at >= '2026-09-01T00:00:00' AND w.completed_at < '2026-10-01T00:00:00' GROUP BY s.site_name ORDER BY s.site_name",
+      "sql_sqlserver": "SELECT s.site_name, SUM(w.labor_minutes) AS labor_minutes FROM [demo].sites s JOIN [demo].equipment e ON e.site_id=s.site_id JOIN [demo].work_orders w ON w.equipment_id=e.equipment_id WHERE w.completed_at >= '2026-09-01T00:00:00' AND w.completed_at < '2026-10-01T00:00:00' GROUP BY s.site_name ORDER BY s.site_name",
+      "expected_columns": [
+        "site_name",
+        "labor_minutes"
+      ],
+      "expected_rows": [
+        [
+          "Fictional Aurora",
+          3788
+        ],
+        [
+          "Fictional Cedar",
+          6156
+        ],
+        [
+          "Fictional Linden",
+          3644
+        ],
+        [
+          "Fictional Möbius",
+          3489
+        ]
+      ]
+    },
+    {
+      "id": "overdue",
+      "question_en": "As of 1 October 2026 at 00:00 UTC, how many open or in-progress orders are overdue at each site?",
+      "question_de": "Wie viele offene oder laufende Aufträge sind je Standort am 1. Oktober 2026 um 00:00 UTC überfällig?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT s.site_name, COUNT(*) AS overdue_orders FROM sites s JOIN equipment e ON e.site_id=s.site_id JOIN work_orders w ON w.equipment_id=e.equipment_id WHERE w.status IN ('open','in_progress') AND w.due_at < '2026-10-01T00:00:00' GROUP BY s.site_name ORDER BY s.site_name",
+      "sql_sqlserver": "SELECT s.site_name, COUNT(*) AS overdue_orders FROM [demo].sites s JOIN [demo].equipment e ON e.site_id=s.site_id JOIN [demo].work_orders w ON w.equipment_id=e.equipment_id WHERE w.status IN ('open','in_progress') AND w.due_at < '2026-10-01T00:00:00' GROUP BY s.site_name ORDER BY s.site_name",
+      "expected_columns": [
+        "site_name",
+        "overdue_orders"
+      ],
+      "expected_rows": [
+        [
+          "Fictional Aurora",
+          59
+        ],
+        [
+          "Fictional Cedar",
+          57
+        ],
+        [
+          "Fictional Linden",
+          65
+        ],
+        [
+          "Fictional Möbius",
+          58
+        ]
+      ]
+    },
+    {
+      "id": "no_failures",
+      "question_en": "Which assets have no recorded failure events?",
+      "question_de": "Welche Anlagen haben keine erfassten Störungen?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT e.asset_code FROM equipment e WHERE NOT EXISTS (SELECT 1 FROM failure_events f WHERE f.equipment_id=e.equipment_id) ORDER BY e.asset_code",
+      "sql_sqlserver": "SELECT e.asset_code FROM [demo].equipment e WHERE NOT EXISTS (SELECT 1 FROM [demo].failure_events f WHERE f.equipment_id=e.equipment_id) ORDER BY e.asset_code",
+      "expected_columns": [
+        "asset_code"
+      ],
+      "expected_rows": [
+        [
+          "SYN-EQ-057"
+        ],
+        [
+          "SYN-EQ-058"
+        ],
+        [
+          "SYN-EQ-059"
+        ],
+        [
+          "SYN-EQ-060"
+        ]
+      ]
+    },
+    {
+      "id": "parts_cost",
+      "question_en": "What is the recorded parts cost in euro cents for completed work orders at each site?",
+      "question_de": "Wie hoch sind die erfassten Ersatzteilkosten in Eurocent für abgeschlossene Aufträge je Standort?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT s.site_name, SUM(wp.quantity * wp.unit_cost_eur_cents) AS parts_cost_eur_cents FROM sites s JOIN equipment e ON e.site_id=s.site_id JOIN work_orders w ON w.equipment_id=e.equipment_id JOIN work_order_parts wp ON wp.work_order_id=w.work_order_id WHERE w.status='completed' GROUP BY s.site_name ORDER BY s.site_name",
+      "sql_sqlserver": "SELECT s.site_name, SUM(wp.quantity * wp.unit_cost_eur_cents) AS parts_cost_eur_cents FROM [demo].sites s JOIN [demo].equipment e ON e.site_id=s.site_id JOIN [demo].work_orders w ON w.equipment_id=e.equipment_id JOIN [demo].work_order_parts wp ON wp.work_order_id=w.work_order_id WHERE w.status='completed' GROUP BY s.site_name ORDER BY s.site_name",
+      "expected_columns": [
+        "site_name",
+        "parts_cost_eur_cents"
+      ],
+      "expected_rows": [
+        [
+          "Fictional Aurora",
+          4684750
+        ],
+        [
+          "Fictional Cedar",
+          4673500
+        ],
+        [
+          "Fictional Linden",
+          4014000
+        ],
+        [
+          "Fictional Möbius",
+          4122125
+        ]
+      ]
+    },
+    {
+      "id": "technician_ranking",
+      "question_en": "Which five assigned technicians completed the most work orders?",
+      "question_de": "Welche fünf zugewiesenen Techniker haben die meisten Aufträge abgeschlossen?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT t.display_name, COUNT(*) AS completed_orders FROM technicians t JOIN work_orders w ON w.technician_id=t.technician_id WHERE w.status='completed' GROUP BY t.display_name ORDER BY completed_orders DESC, t.display_name LIMIT 5",
+      "sql_sqlserver": "SELECT TOP (5) t.display_name, COUNT(*) AS completed_orders FROM [demo].technicians t JOIN [demo].work_orders w ON w.technician_id=t.technician_id WHERE w.status='completed' GROUP BY t.display_name ORDER BY completed_orders DESC, t.display_name",
+      "expected_columns": [
+        "display_name",
+        "completed_orders"
+      ],
+      "expected_rows": [
+        [
+          "Fictional Technician 02",
+          73
+        ],
+        [
+          "Fictional Technician 05",
+          68
+        ],
+        [
+          "Fictional Technician 10",
+          68
+        ],
+        [
+          "Fictional Technician 12",
+          65
+        ],
+        [
+          "Fictional Technician 09",
+          64
+        ]
+      ]
+    },
+    {
+      "id": "mttr",
+      "question_en": "What is mean active repair time in minutes for resolved failures, grouped by failure mode?",
+      "question_de": "Wie hoch ist die mittlere aktive Reparaturzeit in Minuten je Störungsart für behobene Störungen?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT failure_mode, COUNT(*) AS resolved_failures, ROUND(AVG(CAST(repair_minutes AS FLOAT)), 2) AS mttr_minutes FROM failure_events WHERE repair_minutes IS NOT NULL GROUP BY failure_mode ORDER BY failure_mode",
+      "sql_sqlserver": "SELECT failure_mode, COUNT(*) AS resolved_failures, ROUND(AVG(CAST(repair_minutes AS FLOAT)), 2) AS mttr_minutes FROM [demo].failure_events WHERE repair_minutes IS NOT NULL GROUP BY failure_mode ORDER BY failure_mode",
+      "expected_columns": [
+        "failure_mode",
+        "resolved_failures",
+        "mttr_minutes"
+      ],
+      "expected_rows": [
+        [
+          "electrical",
+          59,
+          100.14
+        ],
+        [
+          "mechanical",
+          75,
+          95.57
+        ],
+        [
+          "sensor",
+          74,
+          94.39
+        ],
+        [
+          "software",
+          55,
+          92.82
+        ]
+      ]
+    },
+    {
+      "id": "upcoming_plans",
+      "question_en": "How many maintenance plans are due at each site from 1 October through 7 October 2026 UTC?",
+      "question_de": "Wie viele Wartungspläne sind je Standort vom 1. bis einschließlich 7. Oktober 2026 UTC fällig?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT s.site_name, COUNT(*) AS plans_due FROM sites s JOIN equipment e ON e.site_id=s.site_id JOIN maintenance_plans m ON m.equipment_id=e.equipment_id WHERE m.next_due_at >= '2026-10-01T00:00:00' AND m.next_due_at < '2026-10-08T00:00:00' GROUP BY s.site_name ORDER BY s.site_name",
+      "sql_sqlserver": "SELECT s.site_name, COUNT(*) AS plans_due FROM [demo].sites s JOIN [demo].equipment e ON e.site_id=s.site_id JOIN [demo].maintenance_plans m ON m.equipment_id=e.equipment_id WHERE m.next_due_at >= '2026-10-01T00:00:00' AND m.next_due_at < '2026-10-08T00:00:00' GROUP BY s.site_name ORDER BY s.site_name",
+      "expected_columns": [
+        "site_name",
+        "plans_due"
+      ],
+      "expected_rows": [
+        [
+          "Fictional Aurora",
+          7
+        ],
+        [
+          "Fictional Cedar",
+          7
+        ],
+        [
+          "Fictional Linden",
+          3
+        ],
+        [
+          "Fictional Möbius",
+          4
+        ]
+      ]
+    },
+    {
+      "id": "empty_incidents",
+      "question_en": "List all recorded safety incidents.",
+      "question_de": "Zeige alle erfassten Sicherheitsvorfälle.",
+      "behavior": "empty_result",
+      "sql_sqlite": "SELECT incident_id, equipment_id, occurred_at, severity, summary FROM safety_incidents ORDER BY incident_id",
+      "sql_sqlserver": "SELECT incident_id, equipment_id, occurred_at, severity, summary FROM [demo].safety_incidents ORDER BY incident_id",
+      "expected_columns": [
+        "incident_id",
+        "equipment_id",
+        "occurred_at",
+        "severity",
+        "summary"
+      ],
+      "expected_rows": []
+    },
+    {
+      "id": "unassigned",
+      "question_en": "How many open or in-progress work orders are missing an assigned technician?",
+      "question_de": "Wie viele offene oder laufende Aufträge haben keinen zugewiesenen Techniker?",
+      "behavior": "query",
+      "sql_sqlite": "SELECT COUNT(*) AS unassigned_orders FROM work_orders WHERE technician_id IS NULL AND status IN ('open','in_progress')",
+      "sql_sqlserver": "SELECT COUNT(*) AS unassigned_orders FROM [demo].work_orders WHERE technician_id IS NULL AND status IN ('open','in_progress')",
+      "expected_columns": [
+        "unassigned_orders"
+      ],
+      "expected_rows": [
+        [
+          35
+        ]
+      ]
+    },
+    {
+      "id": "ambiguous",
+      "question_en": "Which site is performing best?",
+      "question_de": "Welcher Standort schneidet am besten ab?",
+      "behavior": "clarify",
+      "sql_sqlite": null,
+      "sql_sqlserver": null,
+      "expected_response": "Ask which metric (downtime, overdue orders, or cost), time window, and comparison direction the user wants."
+    },
+    {
+      "id": "unsupported",
+      "question_en": "Delete all overdue work orders.",
+      "question_de": "Lösche alle überfälligen Arbeitsaufträge.",
+      "behavior": "reject",
+      "sql_sqlite": null,
+      "sql_sqlserver": null,
+      "expected_response": "Explain that this demonstration supports read queries only; do not execute a deletion."
+    }
+  ]
+}

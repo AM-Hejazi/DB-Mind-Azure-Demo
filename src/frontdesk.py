@@ -1,0 +1,170 @@
+# === frontdesk.py ===
+import os
+import re
+import time
+from config import CONFIG
+from src.logger import global_logger as logger
+from src.retrieval import load_schema_text
+from src.validator import validate_sql
+from src.llm_client import LLMClient, LLMError
+from src.schema_context import stage_messages
+
+
+def load_fd_prompt_template():
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    prompt_path = os.path.join(base_dir, "prompts", "FD.txt")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def load_fd_feedback_template():
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    prompt_path = os.path.join(base_dir, "prompts", "FD_feedback.txt")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def build_prompt(schema_block, sample_values_block, chat_history_str):
+    template = load_fd_prompt_template()
+    return (template
+            .replace("{SCHEMA_BLOCK}", schema_block or "No schema available.")
+            .replace("{SAMPLE_VALUES}", sample_values_block or "No values available.")
+            .replace("{HISTORY}", chat_history_str or "None yet.")
+            )
+
+
+def fd_chat_step(chat_history, user_input, schema_block, sample_values_block, provider: str | None = None):
+    """
+    Runs a single turn of the frontdesk conversation.
+    Returns:
+        reply: LLM reply (markdown string)
+        clarified: str or None — extracted <CLARIFIED> question
+        updated_chat: full updated chat history
+    """
+    # Append user input before sending
+    chat_history.append({"role": "user", "content": user_input})
+
+    # Format conversation for prompt
+    history_str = ""
+    for msg in chat_history:
+        prefix = "User" if msg["role"] == "user" else "Assistant"
+        history_str += f"{prefix}: {msg['content']}\n"
+
+    # Build prompt
+    template = load_fd_prompt_template()
+    prompt = (
+        template.replace("{SCHEMA_BLOCK}", schema_block or "N/A")
+                .replace("{SAMPLE_VALUES}", sample_values_block or "N/A")
+                .replace("{HISTORY}", history_str)
+    )
+
+    llm = LLMClient(stage="FA", provider=provider)
+    response = llm.chat(
+        messages=stage_messages(template, {'SCHEMA_BLOCK': schema_block,
+                                'SAMPLE_VALUES': sample_values_block, 'HISTORY': chat_history}),
+        temperature=0.2,
+    )
+
+    reply = response.choices[0].message.content.strip()
+    chat_history.append({"role": "assistant", "content": reply})
+
+    # Extract <CLARIFIED> block
+    clarified = None
+    if "<CLARIFIED>" in reply and "</CLARIFIED>" in reply:
+        start = reply.find("<CLARIFIED>") + len("<CLARIFIED>")
+        end = reply.find("</CLARIFIED>")
+        clarified = reply[start:end].strip()
+
+    return reply, clarified, chat_history
+
+
+def fd_feedback(chat_history, final_question, sql_query, result_rows, selected_schema, provider: str | None = None):
+    """
+    Runs a single feedback turn.
+    Returns:
+        reply: str – model reply
+        rating_start: bool – whether to trigger rating stars
+        chat_history: updated conversation
+    """
+    # Format chat history
+    history_str = ""
+    if not chat_history:
+        history_str = "User: (no prior input yet)\n"
+    else:
+        for msg in chat_history:
+            role = msg.get("role")
+            content = msg.get("content", "").strip()
+            if not content:
+                continue
+            prefix = "User" if role == "user" else "Assistant"
+            history_str += f"{prefix}: {content}\n"
+
+    # Truncate SQL results
+    max_rows = 10
+    result_preview = "\n".join(str(row) for row in result_rows[:max_rows]) if result_rows else "(no rows returned)"
+
+    # Format schema snippet
+    schema_str = ""
+    if isinstance(selected_schema, dict):
+        all_tables = selected_schema.get("tables", [])
+        all_columns = selected_schema.get("columns", [])
+        for table_name in all_tables:
+            schema_str += f"\nTable {table_name}:\n"
+            for full_col in all_columns:
+                if full_col.startswith(f"{table_name}."):
+                    col_name = full_col.split(".")[-1]
+                    schema_str += f"- {col_name}\n"
+
+    # All feedback stages use the same bounded rich canonical schema adapter.
+    if isinstance(selected_schema, dict) and selected_schema.get('tables'):
+        from src.query_generator import build_schema_struct_from_json, format_schema_block
+        schema_str = format_schema_block(build_schema_struct_from_json(
+            selected_schema['tables'], selected_schema.get('columns', [])))
+    # Load and inject prompt
+    template = load_fd_feedback_template()
+    system_prompt = template.replace("{final_question}", final_question.strip()) \
+                            .replace("{sql_query}", sql_query.strip()) \
+                            .replace("{result_preview}", result_preview.strip()) \
+                            .replace("{Selected Schema}", schema_str.strip()) \
+                            .replace("{chat_history_text}", history_str.strip())
+
+    try:
+        llm = LLMClient(stage="FA", provider=provider)
+        response = llm.chat(
+            messages=stage_messages(template, {'final_question': final_question, 'sql_query': sql_query,
+                                    'result_preview': result_preview, 'Selected Schema': schema_str,
+                                    'chat_history_text': chat_history}),
+            temperature=0.2,
+        )
+
+        reply = response.choices[0].message.content.strip()
+
+        # Default to full reply in UI unless rating is detected later
+        ui_reply = reply
+
+        # Check if the agent requested execution
+        if "<RUN_SQL>" in reply and "</RUN_SQL>" in reply:
+            matches = re.findall(r"<RUN_SQL>(.*?)</RUN_SQL>", reply, re.DOTALL)
+            if (len(matches) != 1 or reply.count("<RUN_SQL>") != 1 or reply.count("</RUN_SQL>") != 1 or
+                not matches[0].strip() or len(matches[0]) > 12000 or "\x00" in matches[0]):
+                raise LLMError("malformed", "Feedback query response has an invalid execution block")
+            sql_to_run = matches[0].strip()
+
+            # Propose only. SessionService keeps the verified proposal server-side
+            # and requires a later explicit /execute message before execution.
+            reply += "\nReview the proposed query before confirming execution."
+            ui_reply = reply
+
+        # Rating detection (for log/trigger only — not shown to user)
+        rating_start = "Estimated user rating" in reply
+
+        # 💡 Strip rating from UI message if present
+        if rating_start:
+            ui_reply = reply.split("Estimated user rating")[0].strip()
+
+    except Exception as e:
+        logger.log("FD Feedback Model Crash", str(e))
+        reply = "❌ Feedback Agent LLM call failed. Please rephrase or retry."
+        ui_reply = reply
+        rating_start = False
+
+    chat_history.append({"role": "assistant", "content": ui_reply})
+    return reply, rating_start, chat_history

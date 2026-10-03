@@ -1,0 +1,5 @@
+# Optional SQL Server transport. No dependencies needed for SQLite/offline tests.
+# pyodbc matches the existing research requirements; OS driver is separate.
+pyodbc==5.2.0
+# Installed in the tested release lock/image; live Azure authentication remains unverified.
+azure-identity==1.25.3

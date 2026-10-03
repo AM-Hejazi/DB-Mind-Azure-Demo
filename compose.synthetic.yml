@@ -1,0 +1,16 @@
+# Optional local integration only. `up` may download the operator-selected image.
+# No container is started by the Python seed command or application imports.
+services:
+  sqlserver:
+    image: ${DBMIND_SQLSERVER_IMAGE:?Set a reviewed SQL Server Linux image tag or digest}
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${DBMIND_SQLSERVER_SETUP_PASSWORD:?Set a local setup-only password}
+    ports:
+      - "127.0.0.1:14333:1433"
+    volumes:
+      - synthetic_sqlserver:/var/opt/mssql
+volumes:
+  synthetic_sqlserver:

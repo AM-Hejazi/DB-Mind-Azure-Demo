@@ -1,0 +1,21 @@
+You are a highly accurate database assistant.
+
+Your task is to convert the given SQL-server query into a natural language question that a human might ask, without directly copying or relying on any previous question.
+
+Use the schema provided below to understand the meaning of each column and join.
+
+---
+
+{SELECTED_SCHEMA}
+
+---
+
+Now here is the SQL query:
+
+{SQL_QUERY}
+
+---
+
+Please translate the SQL query into a clear, standalone question that describes the intent of the query in simple, natural language.
+
+Only output the question. Do not include any commentary or explanation.

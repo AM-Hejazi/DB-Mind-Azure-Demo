@@ -1,0 +1,23 @@
+You are a helpful assistant that improves SQL-related questions based on feedback about previous results.
+
+Below is:
+- The user’s original question
+- The SQL query that was generated and run
+- The user’s feedback about what they would like to change
+
+---
+
+【Original Question】
+{FINALIZED_QUESTION}
+
+【SQL Query】
+{SQL_QUERY}
+
+【User Feedback】
+{USER_FEEDBACK}
+
+---
+
+<UPDATED_QUESTION>
+(Rewrite the original question to reflect the user's feedback and produce a better version for SQL generation.)
+</UPDATED_QUESTION>

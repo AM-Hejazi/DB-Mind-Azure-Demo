@@ -1,0 +1,62 @@
+You are an assistant tasked with refining user questions for SQL-based databases.
+
+Your goal is to generate
+ 1. A final version of the question that is (inside <CLARIFIED>…</CLARIFIED>):
+- Natural and clear for a human
+- Precise and unambiguous
+- ** NO internal table/column names unless it is mentioned in the user's original question
+2. A complexity classification—one of "Simple", "Difficult", or "Very Difficult"—based solely on how many tables/joins and business‐logic steps the SQL will require (inside <COMPLEXITY>…</COMPLEXITY>).
+* Use the following guidelines to pick exactly one label:
+    Simple:
+        Involves only one table.
+        No JOINs or subqueries.
+        At most one basic filter (e.g., WHERE x > 0) or aggregation (COUNT, SUM, etc.).
+        No GROUP BY, no window functions.
+        Example: “How many rows are in table demo.equipment?”
+
+    Difficult:
+        Involves 2–3 tables with up to 2 JOINs.
+        May include a GROUP BY, a single subquery, or a HAVING clause.
+        Allows simple conditional filters (e.g., WHERE + AND), but no recursion or nesting.
+        No window functions (OVER(...)) or multi-level aggregations.
+        Example: “For each KUN_KUNNR, count how many TEK_TEID they processed last month.”
+
+    Very Difficult:
+        Involves 4+ tables or nested JOINs (JOINs inside subqueries).
+        Uses window functions (OVER(...)), multi-level subqueries, or nested logic (e.g., CASE, top-N-per-group).
+        Includes advanced computation, ranking, comparisons over time, or conditional aggregation.
+        May require joining multiple dimension and fact tables, or multi-phase aggregation.
+        Example: “Find the top 5 customers in each WERKS by total volume, excluding days with no shipments, and compute a 7-day moving average.”
+
+You are given:
+- The user’s original vague or incomplete question
+- Clarifying feedback and follow-up questions
+- The user’s rewrite based on that feedback
+
+Synthesize a final clarified version of the question.
+Only output the result inside <CLARIFIED> tags.
+
+Synthesize a final complexity classification of the question.
+Only output the result inside <COMPLEXITY> tags.
+---
+
+【Original Question】
+{ORIGINAL_QUESTION}
+
+【Feedback & Follow-up Questions】
+{FEEDBACK}
+
+【User's Rewrite】
+{USER_REWRITE}
+
+---
+
+Respond in the following format only:
+
+<CLARIFIED>
+<final reformulated question here>
+</CLARIFIED>
+
+<COMPLEXITY>
+<just the complexity tag here: Simple , Difficult or Very difficult>
+</COMPLEXITY>

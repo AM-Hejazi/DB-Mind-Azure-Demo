@@ -1,0 +1,258 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "environmentId": {
+      "type": "string"
+    },
+    "identityId": {
+      "type": "string"
+    },
+    "identityClientId": {
+      "type": "string"
+    },
+    "registryServer": {
+      "type": "string"
+    },
+    "image": {
+      "type": "string"
+    },
+    "dbServer": {
+      "type": "string"
+    },
+    "dbName": {
+      "type": "string"
+    },
+    "sqlUser": {
+      "type": "string"
+    },
+    "sourceCommit": {
+      "type": "string"
+    },
+    "sqlPassword": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "appAuth": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "deepseekKey": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "dbAuth": {
+      "type": "string",
+      "defaultValue": "sql_password",
+      "allowedValues": [
+        "sql_password",
+        "managed_identity"
+      ]
+    },
+    "llmMode": {
+      "type": "string",
+      "defaultValue": "mock",
+      "allowedValues": [
+        "mock",
+        "live"
+      ]
+    }
+  },
+  "variables": {
+    "publicEnv": [
+      {
+        "name": "APP_HOST",
+        "value": "0.0.0.0"
+      },
+      {
+        "name": "PORT",
+        "value": "7860"
+      },
+      {
+        "name": "APP_LLM_MODE",
+        "value": "[parameters('llmMode')]"
+      },
+      {
+        "name": "DB_PROFILE",
+        "value": "azure_sql"
+      },
+      {
+        "name": "DB_DIALECT",
+        "value": "sqlserver"
+      },
+      {
+        "name": "DB_SERVER",
+        "value": "[parameters('dbServer')]"
+      },
+      {
+        "name": "DB_NAME",
+        "value": "[parameters('dbName')]"
+      },
+      {
+        "name": "DB_AUTH",
+        "value": "[parameters('dbAuth')]"
+      },
+      {
+        "name": "DB_USER",
+        "value": "[if(equals(parameters('dbAuth'), 'sql_password'), parameters('sqlUser'), '')]"
+      },
+      {
+        "name": "DB_MANAGED_IDENTITY_CLIENT_ID",
+        "value": "[if(equals(parameters('dbAuth'), 'managed_identity'), parameters('identityClientId'), '')]"
+      },
+      {
+        "name": "DB_SCHEMA_SCOPE",
+        "value": "demo"
+      },
+      {
+        "name": "DB_SCHEMA_JSON",
+        "value": "var/synthetic/azure-schema-v1.json"
+      },
+      {
+        "name": "DB_DISCOVERY_TIMEOUT_SECONDS",
+        "value": "300"
+      },
+      {
+        "name": "LLM_PROVIDER",
+        "value": "deepseek"
+      },
+      {
+        "name": "DEEPSEEK_MODEL",
+        "value": "deepseek-flash"
+      },
+      {
+        "name": "DEEPSEEK_THINKING",
+        "value": "disabled"
+      },
+      {
+        "name": "LLM_ENABLE_EVALUATION",
+        "value": "false"
+      },
+      {
+        "name": "GRADIO_ANALYTICS_ENABLED",
+        "value": "False"
+      },
+      {
+        "name": "HF_HUB_OFFLINE",
+        "value": "1"
+      },
+      {
+        "name": "HF_HUB_DISABLE_TELEMETRY",
+        "value": "1"
+      },
+      {
+        "name": "APP_AUTH",
+        "secretRef": "private-auth"
+      },
+      {
+        "name": "DEEPSEEK_API_KEY",
+        "secretRef": "deepseek-key"
+      }
+    ]
+  },
+  "resources": [
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('appName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "purpose": "dbmind-synthetic-demo",
+        "sourceCommit": "[parameters('sourceCommit')]"
+      },
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[parameters('identityId')]": {}
+        }
+      },
+      "properties": {
+        "managedEnvironmentId": "[parameters('environmentId')]",
+        "workloadProfileName": "Consumption",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 7860,
+            "transport": "auto",
+            "allowInsecure": false
+          },
+          "registries": [
+            {
+              "server": "[parameters('registryServer')]",
+              "identity": "[parameters('identityId')]"
+            }
+          ],
+          "secrets": "[concat(createArray(createObject('name','private-auth','value',parameters('appAuth')),createObject('name','deepseek-key','value',parameters('deepseekKey'))),if(equals(parameters('dbAuth'),'sql_password'),createArray(createObject('name','sql-password','value',parameters('sqlPassword'))),json('[]')))]"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "dbmind",
+              "image": "[parameters('image')]",
+              "resources": {
+                "cpu": 0.5,
+                "memory": "1Gi"
+              },
+              "env": "[concat(variables('publicEnv'),if(equals(parameters('dbAuth'),'sql_password'),createArray(createObject('name','DB_PASSWORD','secretRef','sql-password')),json('[]')))]",
+              "probes": [
+                {
+                  "type": "Startup",
+                  "httpGet": {
+                    "path": "/health/ready",
+                    "port": 7860,
+                    "scheme": "HTTP"
+                  },
+                  "periodSeconds": 30,
+                  "timeoutSeconds": 2,
+                  "failureThreshold": 40,
+                  "successThreshold": 1
+                },
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/health/ready",
+                    "port": 7860,
+                    "scheme": "HTTP"
+                  },
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 2,
+                  "failureThreshold": 3,
+                  "successThreshold": 1
+                },
+                {
+                  "type": "Liveness",
+                  "httpGet": {
+                    "path": "/health/live",
+                    "port": 7860,
+                    "scheme": "HTTP"
+                  },
+                  "periodSeconds": 30,
+                  "timeoutSeconds": 2,
+                  "failureThreshold": 3,
+                  "successThreshold": 1
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 1
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "url": {
+      "type": "string",
+      "value": "[concat('https://',reference(resourceId('Microsoft.App/containerApps',parameters('appName')),'2024-03-01').configuration.ingress.fqdn)]"
+    }
+  }
+}

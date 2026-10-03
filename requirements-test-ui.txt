@@ -1,0 +1,2 @@
+# Compatibility entrypoint: use the current complete release lock.
+-r requirements.lock
