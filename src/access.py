@@ -9,6 +9,8 @@ import hmac
 import json
 import os
 import re
+import secrets
+from http.cookies import SimpleCookie
 import threading
 import time
 from urllib.parse import unquote, parse_qs, urlsplit
@@ -29,7 +31,7 @@ class AccessSettings:
     global_calls_day: int = 120
     requests_hour: int = 240
     max_sessions: int = 4
-    session_ttl: int = 3600
+    session_ttl: int = 1800
     queue_size: int = 8
 
 
@@ -59,7 +61,7 @@ def load_access_settings(environ=None):
     return AccessSettings(tuple(users), integer('APP_QUESTIONS_PER_HOUR',2,1,10),
         integer('APP_QUESTIONS_PER_DAY',10,1,30),integer('APP_MODEL_CALLS_PER_HOUR',24,1,100),
         integer('APP_GLOBAL_MODEL_CALLS_PER_DAY',120,1,500),integer('APP_REQUESTS_PER_HOUR',240,10,1000),
-        integer('APP_MAX_SESSIONS_PER_USER',4,1,8),integer('APP_SESSION_TTL_SECONDS',3600,60,86400),
+        integer('APP_MAX_SESSIONS_PER_USER',4,1,8),integer('APP_SESSION_TTL_SECONDS',1800,60,1800),
         integer('APP_QUEUE_SIZE',8,1,16))
 
 
@@ -72,6 +74,7 @@ class Session:
     history: list = field(default_factory=list)
     lock: object = field(default_factory=threading.Lock, repr=False)
     logger: object = None
+    visitor: str = None
 
 
 class AccessPolicy:
@@ -81,6 +84,7 @@ class AccessPolicy:
         self._lock=threading.RLock()
         self._events=defaultdict(deque)
         self._sessions={}
+        self._visitors={}
         self.operations=threading.BoundedSemaphore(1)
 
     def authenticate(self, authorization):
@@ -101,14 +105,44 @@ class AccessPolicy:
         if len(events)>=limit:raise AccessError('Private-demo allowance reached; try again after the window expires')
         events.append(now)
 
-    def request(self,user):
-        if user not in {u for u,_ in self.settings.users}:raise AccessError('Authenticated access is required')
-        with self._lock:self._reserve(('request',user),self.settings.requests_hour,3600)
+    def visitor(self,user,token=None):
+        """Opaque server-owned browser visit; expired tokens never renew on reload."""
+        with self._lock:
+            if token:
+                visit=self._visitors.get(token)
+                if not visit or visit[0]!=user:
+                    raise AccessError(EXPIRED_MESSAGE)
+                if self.clock()>=visit[1]+self.settings.session_ttl:
+                    for key,session in list(self._sessions.items()):
+                        if session.visitor==token:
+                            budget=session.state.get('llm_budget')
+                            if budget:budget.cancel()
+                            if not session.lock.locked():del self._sessions[key]
+                    raise AccessError(EXPIRED_MESSAGE)
+                return token
+            # Keep expired tokens as tombstones, so reload cannot silently renew a visit.
+            # Bound memory for this intentionally single-process demonstration.
+            if len(self._visitors)>=10000:
+                raise AccessError('Demo capacity reached. Please contact the developer.')
+            token=secrets.token_urlsafe(32)
+            self._visitors[token]=(user,self.clock())
+            return token
 
-    def session(self,user,key):
+    def allowance_key(self,user,visitor=None):
+        if visitor:
+            self.visitor(user,visitor)
+            return (user,visitor)
+        return user
+
+    def request(self,user,visitor=None):
+        if user not in {u for u,_ in self.settings.users}:raise AccessError('Authenticated access is required')
+        with self._lock:self._reserve(('request',self.allowance_key(user,visitor)),self.settings.requests_hour,3600)
+
+    def session(self,user,key,visitor=None):
         if user not in {u for u,_ in self.settings.users} or not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',key):
             raise AccessError('Authenticated server session is required')
         with self._lock:
+            self.allowance_key(user,visitor)
             now=self.clock()
             for existing,session in list(self._sessions.items()):
                 if now-session.touched>self.settings.session_ttl and not session.lock.locked():
@@ -117,16 +151,19 @@ class AccessPolicy:
                     del self._sessions[existing]
             if key in self._sessions and self._sessions[key].owner!=user:
                 raise AccessError('Session belongs to another authenticated user')
+            if key in self._sessions and self._sessions[key].visitor!=visitor:
+                raise AccessError('Session belongs to another browser visit')
             if key not in self._sessions:
-                if sum(s.owner==user for s in self._sessions.values())>=self.settings.max_sessions:
+                if sum(s.owner==user and s.visitor==visitor for s in self._sessions.values())>=self.settings.max_sessions:
                     raise AccessError('Too many active sessions for this account')
                 from src.logger import PipelineLogger
-                self._sessions[key]=Session(user,key,now,logger=PipelineLogger())
+                self._sessions[key]=Session(user,key,now,logger=PipelineLogger(),visitor=visitor)
             self._sessions[key].touched=now
             return self._sessions[key]
 
-    def begin_question(self,user):
+    def begin_question(self,user,visitor=None):
         with self._lock:
+            user=self.allowance_key(user,visitor)
             # Check both windows before charging either; no partial reservation.
             now=self.clock()
             for key,limit,seconds in [(('question_hour',user),self.settings.questions_hour,3600),
@@ -137,9 +174,10 @@ class AccessPolicy:
             self._events[('question_hour',user)].append(now)
             self._events[('question_day',user)].append(now)
 
-    def charge(self,user):
+    def charge(self,user,visitor=None):
         with self._lock:
             now=self.clock()
+            user=self.allowance_key(user,visitor)
             keys=[(('calls',user),self.settings.calls_hour,3600),(('global_calls',),self.settings.global_calls_day,86400)]
             for key,limit,seconds in keys:
                 events=self._events[key]
@@ -148,21 +186,26 @@ class AccessPolicy:
             for key,_,_ in keys:self._events[key].append(now)
 
 
+EXPIRED_MESSAGE='Your 30-minute demo session has ended. Please contact the developer to request more access.'
+VISITOR_COOKIE='dbmind_visit'
+
+
 _ACTOR=ContextVar('dbmind_authenticated_actor',default=None)
 
 
 @contextmanager
 def operator_scope():
     """Explicit local CLI boundary; never bound as a browser callback."""
-    token=_ACTOR.set(('operator',None))
+    token=_ACTOR.set(('operator',None,None))
     try:yield
     finally:_ACTOR.reset(token)
 
 
 @contextmanager
-def private_scope(policy,user):
+def private_scope(policy,user,visitor=None):
     if user not in {u for u,_ in policy.settings.users}:raise AccessError('Authenticated access is required')
-    token=_ACTOR.set((user,policy))
+    policy.allowance_key(user,visitor)
+    token=_ACTOR.set((user,policy,visitor))
     try:yield
     finally:_ACTOR.reset(token)
 
@@ -170,8 +213,8 @@ def private_scope(policy,user):
 def charge_model_attempt():
     actor=_ACTOR.get()
     if actor is None:raise AccessError('A trusted authenticated or explicit local operator context is required')
-    user,policy=actor
-    if policy is not None:policy.charge(user)
+    user,policy,visitor=actor
+    if policy is not None:policy.charge(user,visitor)
 
 
 class SecureASGI:
@@ -209,8 +252,21 @@ class SecureASGI:
             host=headers.get(b'host',b'').decode('latin1').lower()
             if parsed.scheme not in {'http','https'} or parsed.netloc.lower()!=host or parsed.username or parsed.password:
                 return await self.reject(send,403,'Cross-origin requests are not allowed')
-        try:self.policy.request(user)
-        except AccessError:return await self.reject(send,429,'Private-demo request allowance reached')
+        cookies=SimpleCookie()
+        try:cookies.load(headers.get(b'cookie',b'').decode('latin1'))
+        except Exception:return await self.reject(send,403,'Invalid session cookie')
+        previous=cookies.get(VISITOR_COOKIE)
+        try:visitor=self.policy.visitor(user,previous.value if previous else None)
+        except AccessError as error:return await self.reject(send,403,str(error))
+        scope['dbmind_visit']=visitor
+        # Timer polling does not consume the ordinary HTTP allowance.
+        if scope.get('method')=='GET' and scope.get('path')=='/demo/session':
+            remaining=max(0,self.policy.settings.session_ttl-(self.policy.clock()-self.policy._visitors[visitor][1]))
+            return await self.reject(send,200,json.dumps({'remaining_seconds':remaining}))
+        # Loading assets, config and refreshing the page must not exhaust actions.
+        if scope.get('method') not in {'GET','HEAD'} or '/queue/' in scope.get('path',''):
+            try:self.policy.request(user,visitor)
+            except AccessError:return await self.reject(send,429,'Private-demo request allowance reached')
         path=scope.get('path','')
         for _ in range(4):path=unquote(path)
         if re.search(r'/(?:call|stream|component_server)(?:/|$)',path):
@@ -235,18 +291,23 @@ class SecureASGI:
                 try:payload=json.loads(b''.join(p.get('body',b'') for p in bodies))
                 except (ValueError,RecursionError):return await self.reject(send,400,'Invalid request')
                 if isinstance(payload,dict) and payload.get('session_hash') is not None:
-                    try:self.policy.session(user,payload['session_hash'])
+                    try:self.policy.session(user,payload['session_hash'],visitor)
                     except AccessError:return await self.reject(send,403,'Session unavailable')
         query=parse_qs(scope.get('query_string',b'').decode('latin1'))
         for key in query.get('session_hash',[]):
-            try:self.policy.session(user,key)
+            try:self.policy.session(user,key,visitor)
             except AccessError:return await self.reject(send,403,'Session unavailable')
         async def replay():
             if bodies:return bodies.pop(0)
             return await receive()
         async def secure_send(message):
             if message['type']=='http.response.start':
-                message={**message,'headers':list(message.get('headers',[]))+[
+                cookie_headers=[]
+                if not previous:
+                    cookie=f'{VISITOR_COOKIE}={visitor}; Path=/; HttpOnly; SameSite=Strict'
+                    if scope.get('scheme')=='https':cookie+='; Secure'
+                    cookie_headers=[(b'set-cookie',cookie.encode('ascii'))]
+                message={**message,'headers':list(message.get('headers',[]))+cookie_headers+[
                     (b'cache-control',b'no-store'),(b'x-content-type-options',b'nosniff'),
                     (b'referrer-policy',b'no-referrer')]}
             await send(message)

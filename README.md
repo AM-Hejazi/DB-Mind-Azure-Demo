@@ -112,3 +112,31 @@ The original `AM-Hejazi/DB-Mind` repository and history are preserved.
 [Cleanup manifest](docs/cleanup-manifest.md) records omissions and retained assets.
 The original `data/icon.png` logo is embedded as a trusted data URI, preserving
 blocked Gradio file routes. No new license or ownership grant is inferred.
+
+### Recruiter demo sessions
+
+Authenticated browsers receive an opaque, HttpOnly, same-site visit cookie. Each
+visit has a fixed 30-minute deadline from its first authenticated page request.
+Reloads, activity, new tabs and “New question” do not extend that deadline. At
+expiry the page displays: “Your 30-minute demo session has ended. Please contact
+the developer to request more access.” The server rejects subsequent requests
+and checks expiry before queued work, database reads and each model attempt.
+
+Request, question and model allowances are isolated per browser visit so people
+sharing the demo login do not consume each other's individual allowances. Asset
+loads, page refreshes and deadline polling do not consume the action allowance.
+The overall daily model-call cap and serialized operation capacity still apply.
+`APP_SESSION_TTL_SECONDS` defaults to 1800 and cannot exceed 1800. Visits are held
+in memory; run one replica. Restarting the process invalidates existing visits.
+
+A shared password cannot identify a person: clearing the visit cookie or using
+another browser can start a new visit. For strict access per recruiter, distribute
+individual credentials and use persistent account-level expiry before making
+that promise. This demo enforces a browser-visit limit, not a permanent lockout
+for a human identity.
+
+Changing the hosted login secret only requires restarting the active Azure
+revision. Code changes require building and deploying a new image. Update your
+private `~/dbmind-azure.env` password as well; the full deployment script reads
+that file and would otherwise replace the hosted password with its old value.
+An image-only Container App update preserves the hosted secret.

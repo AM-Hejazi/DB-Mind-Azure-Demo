@@ -32,7 +32,8 @@ class SessionService:
         # Gradio injects this Request, including the auth_dependency username.
         user=getattr(request,'username',None)
         key=getattr(request,'session_hash',None)
-        return self.policy.session(user,key)
+        visitor=getattr(getattr(request,'request',None),'scope',{}).get('dbmind_visit')
+        return self.policy.session(user,key,visitor)
 
     @contextmanager
     def operation(self,session):
@@ -40,7 +41,7 @@ class SessionService:
         try:
             from src.settings import configured as database_configured
             from src.llm_settings import configured as model_configured
-            with private_scope(self.policy,session.owner),use_logger(session.logger),database_configured(self.settings),model_configured(self.llm_settings):
+            with private_scope(self.policy,session.owner,session.visitor),use_logger(session.logger),database_configured(self.settings),model_configured(self.llm_settings):
                 yield
         finally:
             session.state.pop('_progress',None)
@@ -53,7 +54,7 @@ class SessionService:
         with self.operation(session):
             state=session.state
             if not state.get('question_started'):
-                self.policy.begin_question(session.owner)
+                self.policy.begin_question(session.owner,session.visitor)
                 state.update(question_started=True,question=message,final_q='',fd_history=[],
                              llm_budget=new_budget(self.llm_settings),query_attempts=0,feedback_turns=0,pending_sql=None)
             else:
@@ -65,6 +66,7 @@ class SessionService:
         return session
 
     def _query(self,session,sql):
+        self.policy.allowance_key(session.owner,session.visitor)
         state=session.state
         if state.get('query_attempts',0)>=3:raise AccessError('Query attempt allowance reached')
         state['query_attempts']=state.get('query_attempts',0)+1

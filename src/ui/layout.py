@@ -23,6 +23,42 @@ HEADER_CSS = """
 """
 
 
+SESSION_TIMER_JS = """
+void (async () => {
+    if (window.dbmindSessionTimer) return;
+    const expired = 'Your 30-minute demo session has ended. Please contact the developer to request more access.';
+    let deadline;
+    let busy = false;
+    let lastCheck = 0;
+    const stop = () => {
+        clearInterval(window.dbmindSessionTimer);
+        document.body.replaceChildren();
+        const message = document.createElement('p');
+        message.textContent = expired;
+        message.style.cssText = 'font: 18px/1.6 system-ui; max-width: 640px; margin: 64px auto; padding: 24px;';
+        document.body.append(message);
+    };
+    const check = async () => {
+        if (deadline && Date.now() >= deadline) return stop();
+        if (busy || Date.now() - lastCheck < 15000) return;
+        lastCheck = Date.now();
+        busy = true;
+        try {
+            const response = await fetch('/demo/session', {credentials: 'same-origin', cache: 'no-store'});
+            if (response.status === 403 || response.status === 401) return stop();
+            if (response.ok) {
+                const data = await response.json();
+                const next = Date.now() + data.remaining_seconds * 1000;
+                deadline = deadline ? Math.min(deadline, next) : next;
+            }
+        } finally { busy = false; }
+    };
+    window.dbmindSessionTimer = setInterval(() => {check().catch(() => {});}, 1000);
+    await check();
+})().catch(() => {});
+"""
+
+
 def header_html():
     # Fixed, repository-owned asset only. No visitor path or Gradio file route.
     logo=base64.b64encode((ROOT/'data/icon.png').read_bytes()).decode('ascii')
@@ -36,10 +72,10 @@ def create_ui(service):
     provider=('Offline fixture responses (no LLM)' if service.mode=='mock' else
               f'DeepSeek · {service.llm_settings.model} · stage overrides configured on server')
     with gr.Blocks(title='DB Mind · Synthetic maintenance',analytics_enabled=False) as demo:
-        gr.HTML(header_html(),css_template=HEADER_CSS,apply_default_css=False,js_on_load=None)
+        gr.HTML(header_html(),css_template=HEADER_CSS,apply_default_css=False,js_on_load=SESSION_TIMER_JS)
         gr.Markdown(f'**{provider}** · **{settings.dialect}** · fixed reference: 1 October 2026 UTC\n\n'
                     f'Read queries only · at most {settings.max_rows:,} rows and {settings.max_bytes:,} result bytes. '
-                    'Private account allowances apply; reset does not replenish them.')
+                    'Each browser visit lasts up to 30 minutes. After expiry, contact the developer for more access. Question allowances apply per visit; reset does not replenish them.')
         chatbot=gr.Chatbot(value=[{'role':'assistant','content':WELCOME}],
                            label='Conversation / Gespräch',height=340,sanitize_html=True,buttons=['copy'],allow_file_downloads=False)
         status=gr.Markdown('Ready / Bereit',label='Pipeline status')

@@ -91,7 +91,7 @@ class PrivateHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(session.state.get('question_started'))
             self.assertEqual(session.owner,'alice')
             self.assertEqual(session.state['question'],'A synthetic question')
-            self.assertEqual(len(self.policy._events[('question_hour','alice')]),1)
+            self.assertEqual(len(self.policy._events[('question_hour',('alice',self.policy._sessions['owned'].visitor))]),1)
 
     async def test_queued_model_work_uses_trusted_user_and_ignores_forged_body_username(self):
         from src.access import charge_model_attempt
@@ -115,7 +115,7 @@ class PrivateHTTPTests(unittest.IsolatedAsyncioTestCase):
                     if self.policy._sessions['owned'].state.get('finished'):break
                     await asyncio.sleep(.02)
                 self.assertTrue(self.policy._sessions['owned'].state.get('finished'))
-                self.assertEqual(len(self.policy._events[('calls','alice')]),1)
+                self.assertEqual(len(self.policy._events[('calls',('alice',self.policy._sessions['owned'].visitor))]),1)
                 self.assertEqual(len(self.policy._events[('calls','bob')]),0)
 
     async def test_cross_origin_request_rejected_before_queue_or_quota(self):
