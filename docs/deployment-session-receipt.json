@@ -1,0 +1,21 @@
+{
+  "revision": "dbmind-demo--0000007",
+  "image": "dbminddemo659f6e7f.azurecr.io/dbmind@sha256:35421f7accb2507e7984a790d227494c2ddee93aa6f0b14904cf4d83aec666d8",
+  "source_commit": "03065026b71674bfad9ec659fe905a2bd1b9ee4c",
+  "url": "https://dbmind-demo.lemonflower-af0fa12b.southafricanorth.azurecontainerapps.io",
+  "ready_http": 200,
+  "anonymous_config_http": 401,
+  "authenticated_config_http": 200,
+  "blocked_file_http": 404,
+  "session_duration_seconds": 1800,
+  "password_preserved": true,
+  "model_calls": 0,
+  "tests_passed": 99,
+  "ci_url": "https://github.com/AM-Hejazi/DB-Mind-Azure-Demo/actions/runs/37146598453",
+  "hosted_browser_checked": true,
+  "cookie_secure": true,
+  "cookie_http_only": true,
+  "cookie_same_site": "Strict",
+  "reload_retains_deadline": true,
+  "mobile_checked": true
+}

@@ -8,8 +8,43 @@ Application: https://dbmind-demo.lemonflower-af0fa12b.southafricanorth.azurecont
 Public source: https://github.com/AM-Hejazi/DB-Mind-Azure-Demo
 
 The [release receipt](https://github.com/AM-Hejazi/DB-Mind-Azure-Demo/releases/latest)
-records the final source commit and immutable ACR digest.
+records the original acceptance source commit and immutable ACR digest.
+The recruiter-session update below supersedes that runtime image.
 Recording that receipt outside the source tree avoids a self-referential commit.
+
+## Recruiter-session update — 3 October 2026
+
+The existing application now serves revision `dbmind-demo--0000007`. Its tested
+runtime source is `03065026b71674bfad9ec659fe905a2bd1b9ee4c`; the immutable image
+and sanitized checks are recorded in [the session deployment receipt](deployment-session-receipt.json).
+The image-only update preserved the owner's current login secret. No database
+users, roles, firewall, schema or data were changed; no additional resources
+were created and no DeepSeek request was made for this update.
+
+Each authenticated browser visit has a fixed 1,800-second deadline. Activity,
+reloads and new questions cannot extend it. At expiry the controls are removed
+and the message reads: “Your 30-minute demo session has ended. Please contact the
+developer to request more access.” Server checks block expired requests, queued
+work, new database reads and model attempts. Request/question/model allowances
+are separated by browser visit, while the global daily model cap and serialized
+operation capacity remain in place. Assets, config, page refreshes and deadline
+polling do not consume the action allowance.
+
+The full offline suite passed **99 tests**, and [code CI passed](https://github.com/AM-Hejazi/DB-Mind-Azure-Demo/actions/runs/37146598453).
+A local Chromium test with an accelerated server clock verified visible expiry,
+blocked post-expiry requests, and a second independent browser visit. Hosted
+Chromium verified the current password, active timer, retained deadline after
+reload, original logo, mobile layout without overflow and no JavaScript errors.
+The hosted cookie is `Secure`, `HttpOnly`, and `SameSite=Strict`, including when
+Azure terminates HTTPS before the application's HTTP backend. Readiness returned
+200, anonymous config 401, authenticated config 200, and the file route 404.
+
+This is a limit per **browser visit**, not a permanent limit per person. A shared
+password cannot identify recruiters: clearing cookies or switching browsers can
+start another visit. Strict limits per recruiter require individual accounts
+and persistent account expiry. Usage caps may stop a visit before 30 minutes.
+Visits are in memory; process restart invalidates old visit cookies. Open a fresh
+private browser window once after this update to avoid an obsolete cookie.
 
 ## Hosted database evidence
 
