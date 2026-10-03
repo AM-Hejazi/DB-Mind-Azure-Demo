@@ -186,3 +186,43 @@ remained at 30 minutes; the CLI/API did not change it. An owner can set a maximu
 four-hour default for new Codespaces in personal settings. Codespace shutdown
 does not stop Azure hosting. Missing local Docker layers after a restart required
 a fresh isolated BuildKit builder; existing Azure resources remained running.
+
+## Private admin access and setup documentation — 3 October 2026
+
+The current revision is `dbmind-demo--0000010`, from source
+`33db71ffb32ce909ddcd13e573497bb53956c7de`.
+[PR #4](https://github.com/AM-Hejazi/DB-Mind-Azure-Demo/pull/4) is merged;
+[CI](https://github.com/AM-Hejazi/DB-Mind-Azure-Demo/actions/runs/37151932994)
+and local full-suite verification passed **115 tests**. Five new regressions
+cover configured-only admin role, passwords, expiry/session preservation,
+individual allowance bypass with retained global cap, and HTTP protections.
+The first sandboxed full-suite run stalled on local HTTP behavior; it was stopped
+and rerun with local HTTP access, completing successfully in about 15 seconds.
+The corrected PR passed secret scanning; its superseded draft had a placeholder
+password assignment falsely detected as a credential. The private-credential
+repository audit found zero matches.
+
+The separate application admin account has no fixed visit timeout and can repeat
+questions beyond individual demo allowances. Technical request limits, session
+ownership, global model-call cap, per-question budgets, SQL identity/read guards
+and file protections remain enabled. It has no database administrator privileges.
+The generated password is stored only in the operator's protected home environment
+file and the separate Container App secret; it is absent from this report/Git/image.
+Existing database, provider and demo login secrets were preserved.
+
+Live HTTP verification confirmed readiness 200, anonymous config 401, admin config
+200, wrong admin password 401, blocked file route 404, a null admin deadline and
+an unchanged 1,800-second demo deadline. Chromium loaded the hosted admin page at
+mobile width without overflow or JavaScript errors. The shipped timer survived a
+simulated 31-minute advance with an admin deadline response; server expiry exemption
+was tested with a simulated seven-day advance. A real 30-minute hosted wait was
+not performed. No provider calls or Azure SQL changes were made for this update;
+only the existing app's image, admin secret/environment and source tag changed.
+See the [sanitized receipt](deployment-admin-receipt.json).
+
+The README now describes the domain-independent DB-Mind architecture, the fixed
+Feedback → CG → Validator loop and reviewed Analyzer repairs. The
+[own-database guide](own-database-setup.md) documents configuration, schema/sample
+extraction, cache validation and privacy boundaries. It explicitly distinguishes
+supported synthetic SQLite/SQL Server/Azure SQL profiles from the adapter,
+contract, permission and dialect work still required for other databases.
