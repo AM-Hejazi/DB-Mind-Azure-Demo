@@ -126,6 +126,7 @@ class SessionService:
         self._progress(session,'Selecting schema')
         selected=retrieve_schema_with_llm(clarified)
         state['selected']=selected.get('selected',{})
+        state['complexity']=selected.get('complexity','Difficult')
         self._progress(session,'Generating SQL')
         generated=generate_sql_query(clarified,state['selected'],selected.get('complexity','Difficult'))
         sql=extract_final_sql(generated)
@@ -183,7 +184,17 @@ class SessionService:
             question=state.pop('pending_question',None)
             if not proposed:raise AccessError('No pending query to confirm')
             self._progress(session,'Validating and executing approved read query')
-            rows,columns=self._query(session,proposed)
+            try:rows,columns=self._query(session,proposed)
+            except DatabaseError as error:
+                if error.code!='query' or state.get('feedback_repairs',0)>=1:raise
+                state['feedback_repairs']=state.get('feedback_repairs',0)+1
+                self._progress(session,'Analyzing failed revised query')
+                from src.analyzer import analyze_failure
+                corrected,summary=analyze_failure(question or state['final_q'],state['selected'],proposed,str(error))
+                if not corrected:raise LLMError('malformed','Analyzer produced no validated repair proposal')
+                self._propose_revision(session,corrected,question or state['final_q'],
+                    'The approved query failed. The Analyzer proposes this repair for review. '+(summary or ''))
+                return
             state.update(sql=proposed,rows=rows,columns=columns,
                          final_q=question or state['final_q'])
             self._result(session,rows,columns)
@@ -197,15 +208,26 @@ class SessionService:
         self._progress(session,'Reviewing follow-up request')
         decision,history=fd_feedback(history,state['final_q'],state['sql'],state['rows'],state['selected'])
         state['fd_feedback_history']=history[-20:]
+        session.logger.log('Feedback action',decision.action)
         if decision.action=='propose':
-            prepare_read(decision.sql,load_settings())
-            state.update(pending_sql=decision.sql,pending_question=decision.question)
-            self._progress(session,'Query revision awaiting confirmation')
-            session.history.append({'role':'assistant','content':display(decision.reply)+
-                '\nReview this proposed read query, then type /execute to confirm.\n<pre>'+display(decision.sql)+'</pre>'})
+            from src.query_generator import generate_sql_query,extract_final_sql
+            self._progress(session,'Generating revised SQL')
+            generated=generate_sql_query(decision.question,state['selected'],state.get('complexity','Difficult'),
+                revision_context={'previous_question':state['final_q'],'previous_sql':state['sql'],'latest_request':message})
+            proposed=extract_final_sql(generated)
+            if not proposed:raise LLMError('malformed','Query Generator produced no revised query')
+            self._propose_revision(session,proposed,decision.question,decision.reply)
         else:
             self._progress(session,'Follow-up response ready')
             session.history.append({'role':'assistant','content':display(decision.reply)})
+
+    def _propose_revision(self,session,sql,question,reply):
+        self._progress(session,'Validating proposed read query')
+        prepare_read(sql,load_settings())
+        session.state.update(pending_sql=sql,pending_question=question)
+        self._progress(session,'Query revision awaiting confirmation')
+        session.history.append({'role':'assistant','content':display(reply)+
+            '\nReview this proposed read query, then type /execute to confirm.\n<pre>'+display(sql)+'</pre>'})
 
     def reset(self,request):
         session=self.session(request)
