@@ -305,7 +305,11 @@ class SecureASGI:
                 cookie_headers=[]
                 if not previous:
                     cookie=f'{VISITOR_COOKIE}={visitor}; Path=/; HttpOnly; SameSite=Strict'
-                    if scope.get('scheme')=='https':cookie+='; Secure'
+                    # Azure terminates TLS at ingress; its backend scope may be HTTP.
+                    # Remote cookies must be Secure regardless of forwarded headers.
+                    try:loopback=urlsplit('//'+headers.get(b'host',b'').decode('latin1')).hostname in {'localhost','127.0.0.1','::1'}
+                    except ValueError:loopback=False
+                    if scope.get('scheme')=='https' or not loopback:cookie+='; Secure'
                     cookie_headers=[(b'set-cookie',cookie.encode('ascii'))]
                 message={**message,'headers':list(message.get('headers',[]))+cookie_headers+[
                     (b'cache-control',b'no-store'),(b'x-content-type-options',b'nosniff'),

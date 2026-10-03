@@ -21,7 +21,7 @@ class PrivateHTTPTests(unittest.IsolatedAsyncioTestCase):
         from src.access import AccessPolicy,load_access_settings
         self.policy=AccessPolicy(load_access_settings({'APP_AUTH':'alice:offline-password-a,bob:offline-password-b'}))
         self.app=create_secure_app(self.policy)
-        self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app),base_url='http://private-test')
+        self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app),base_url='https://private-test')
         self.addAsyncCleanup(self.client.aclose)
         self.enterContext(patch('src.llm_client.LLMClient._factory',side_effect=AssertionError('Unexpected provider call')))
         self.enterContext(patch('src.db_connection.connect_sqlserver',side_effect=AssertionError('Unexpected SQL Server call')))

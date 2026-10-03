@@ -73,6 +73,21 @@ class DemoSessionTests(unittest.TestCase):
 
 
 class DemoSessionHTTPTests(unittest.IsolatedAsyncioTestCase):
+    async def test_https_ingress_with_http_backend_still_issues_secure_cookie(self):
+        import httpx
+        policy=AccessPolicy(load_access_settings({'APP_AUTH':'demo:offline-password'}))
+        async def inner(scope,receive,send):
+            await send({'type':'http.response.start','status':200,'headers':[]})
+            await send({'type':'http.response.body','body':b'demo'})
+        secured=SecureASGI(inner,policy)
+        async def proxy(scope,receive,send):
+            await secured({**scope,'scheme':'http'},receive,send)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=proxy),base_url='https://demo.test',auth=('demo','offline-password')) as client:
+            response=await client.get('/')
+            self.assertIn('; Secure',response.headers['set-cookie'])
+            self.assertEqual((await client.get('/demo/session')).status_code,200)
+            self.assertEqual(len(policy._visitors),1)
+
     async def test_cookie_reload_expiry_and_second_recruiter(self):
         import httpx
         now=[0]
