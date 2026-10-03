@@ -85,7 +85,8 @@ def main():
     from src.settings import load_settings
     from src.llm_settings import load_llm_settings
     settings = load_settings(env)
-    users = load_access_settings(env).users
+    access = load_access_settings(env)
+    users = tuple(pair for pair in access.users if pair[0] not in access.admins)
     load_llm_settings(env)
     if settings.profile != 'azure_sql' or not users:
         raise ValueError('Azure SQL and private application authentication are required')
@@ -106,9 +107,11 @@ def main():
         'sqlPassword': settings.password if args.db_auth == 'sql_password' else '',
         'appAuth': ','.join(user+':'+password for user,password in users),
         'deepseekKey': env['DEEPSEEK_API_KEY'], 'llmMode': args.mode,
-        'sourceCommit': args.source_commit}
+        'sourceCommit': args.source_commit,
+        'appAdminUsername': env.get('APP_ADMIN_USERNAME',''),
+        'appAdminPassword': env.get('APP_ADMIN_PASSWORD','')}
     token = az('account', 'get-access-token', '--resource', 'https://management.azure.com/')['accessToken']
-    PRIVATE_VALUES.extend([token, values['sqlPassword'], values['appAuth'],
+    PRIVATE_VALUES.extend([values['appAdminPassword'], token, values['sqlPassword'], values['appAuth'],
                            values['deepseekKey'], *[password for _, password in users]])
     url = ('https://management.azure.com/subscriptions/' + account['id']
         + '/resourceGroups/' + group['name'] + '/providers/Microsoft.Resources/deployments/dbmind-demo-app'

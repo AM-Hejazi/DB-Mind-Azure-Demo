@@ -48,6 +48,11 @@ void (async () => {
             if (response.status === 403 || response.status === 401) return stop();
             if (response.ok) {
                 const data = await response.json();
+                if (data.remaining_seconds === null) {
+                    clearInterval(window.dbmindSessionTimer);
+                    deadline = undefined;
+                    return;
+                }
                 const next = Date.now() + data.remaining_seconds * 1000;
                 deadline = deadline ? Math.min(deadline, next) : next;
             }
@@ -75,7 +80,7 @@ def create_ui(service):
         gr.HTML(header_html(),css_template=HEADER_CSS,apply_default_css=False,js_on_load=SESSION_TIMER_JS)
         gr.Markdown(f'**{provider}** · **{settings.dialect}** · fixed reference: 1 October 2026 UTC\n\n'
                     f'Read queries only · at most {settings.max_rows:,} rows and {settings.max_bytes:,} result bytes. '
-                    'Each browser visit lasts up to 30 minutes. After expiry, contact the developer for more access. Question allowances apply per visit; reset does not replenish them.')
+                    'Demo browser visits last up to 30 minutes; configured admin visits have no visit timeout. After expiry, contact the developer for more access. Question allowances apply per visit; reset does not replenish them.')
         chatbot=gr.Chatbot(value=[{'role':'assistant','content':WELCOME}],
                            label='Conversation / Gespräch',height=340,sanitize_html=True,buttons=['copy'],allow_file_downloads=False)
         status=gr.Markdown('Ready / Bereit',label='Pipeline status')
