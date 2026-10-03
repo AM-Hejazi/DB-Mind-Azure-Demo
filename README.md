@@ -140,3 +140,14 @@ revision. Code changes require building and deploying a new image. Update your
 private `~/dbmind-azure.env` password as well; the full deployment script reads
 that file and would otherwise replace the hosted password with its old value.
 An image-only Container App update preserves the hosted secret.
+
+### Changing a result with a follow-up
+
+After a result, ask naturally—for example, “how about last 6 months” or
+“change the query to the last 6 months.” DB-Mind proposes a replacement read
+query using the current question, SQL, schema and the latest request. Review
+the proposal in the conversation and send `/execute` to run it. Existing
+results remain visible until confirmation succeeds; subsequent follow-ups
+then use the updated question and results. Clarifications or a new revision
+invalidate an older unexecuted proposal. The SQL safety gate, runtime permission
+guard, visit expiry and model/query limits apply to follow-ups as well.

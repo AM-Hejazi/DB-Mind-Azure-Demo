@@ -1,7 +1,6 @@
 """Private-demo session orchestration; client history/state never authorizes work."""
 from contextlib import contextmanager
 from html import escape
-import re
 import os
 
 from src.access import AccessError, private_scope
@@ -181,24 +180,32 @@ class SessionService:
         state=session.state
         if message.strip().lower()=='/execute':
             proposed=state.pop('pending_sql',None)
+            question=state.pop('pending_question',None)
             if not proposed:raise AccessError('No pending query to confirm')
+            self._progress(session,'Validating and executing approved read query')
             rows,columns=self._query(session,proposed)
-            state.update(sql=proposed,rows=rows,columns=columns)
+            state.update(sql=proposed,rows=rows,columns=columns,
+                         final_q=question or state['final_q'])
             self._result(session,rows,columns)
             return
+        # Any new conversational turn supersedes the prior unexecuted proposal.
+        # A failed, ambiguous or cancelled revision must not leave stale SQL armed.
+        state.pop('pending_sql',None)
+        state.pop('pending_question',None)
         history=state.setdefault('fd_feedback_history',[])
         history.append({'role':'user','content':message})
-        reply,_,history=fd_feedback(history,state['final_q'],state['sql'],state['rows'],state['selected'])
+        self._progress(session,'Reviewing follow-up request')
+        decision,history=fd_feedback(history,state['final_q'],state['sql'],state['rows'],state['selected'])
         state['fd_feedback_history']=history[-20:]
-        matches=re.findall(r'<RUN_SQL>(.*?)</RUN_SQL>',reply,re.S)
-        if matches:
-            if len(matches)!=1 or reply.count('<RUN_SQL>')!=1 or reply.count('</RUN_SQL>')!=1:
-                raise AccessError('The proposed query is ambiguous')
-            proposed=matches[0].strip()
-            prepare_read(proposed,load_settings())
-            state['pending_sql']=proposed
-            session.history.append({'role':'assistant','content':'Review this proposed read query, then type /execute to confirm.\n<pre>'+display(proposed)+'</pre>'})
-        else:session.history.append({'role':'assistant','content':display(reply)})
+        if decision.action=='propose':
+            prepare_read(decision.sql,load_settings())
+            state.update(pending_sql=decision.sql,pending_question=decision.question)
+            self._progress(session,'Query revision awaiting confirmation')
+            session.history.append({'role':'assistant','content':display(decision.reply)+
+                '\nReview this proposed read query, then type /execute to confirm.\n<pre>'+display(decision.sql)+'</pre>'})
+        else:
+            self._progress(session,'Follow-up response ready')
+            session.history.append({'role':'assistant','content':display(decision.reply)})
 
     def reset(self,request):
         session=self.session(request)
