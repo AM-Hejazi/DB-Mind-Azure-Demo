@@ -31,7 +31,11 @@ src/ui/handlers_FD_bk.py
 src/ui/handlers_backup.py
 *.csv
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
 *.sqlite3
+*.sqlite3-*
 *.patch
 requirements-research.txt
 DB_Mind_Codex_Migration_Prompt.md
