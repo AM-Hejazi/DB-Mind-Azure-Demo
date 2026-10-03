@@ -26,28 +26,28 @@ Feedback `<RUN_SQL>` output is a **proposal**, never execution permission. The s
 
 ## Authentication, quotas, and sessions
 
-Configure process environment using either `APP_USERNAME` plus `APP_PASSWORD`, or `APP_AUTH=user1:password1,user2:password2`. Usernames are unique/simple; passwords are 12–256 characters and hidden from configuration repr. Credentials come only from operator settings. The serving factory refuses missing credentials before building a UI. Use TLS for any remotely accessible deployment; HTTP Basic is suitable for the loopback development server and a TLS-protected private demo, not plaintext remote HTTP. Each recruiter should have a separate username: shared accounts share allowances and sessions.
+Configure process environment using either `APP_USERNAME` plus `APP_PASSWORD`, or `APP_AUTH=user1:password1,user2:password2`. Usernames are unique/simple; passwords are 12–256 characters and hidden from configuration repr. Credentials come only from operator settings. The serving factory refuses missing credentials before building a UI. Use TLS for any remotely accessible deployment; HTTP Basic is suitable for the loopback development server and a TLS-protected private demo, not plaintext remote HTTP. Recruiters can share a login with separate browser visits. A shared password cannot enforce a permanent limit per person; use individual accounts plus persistent expiry for that requirement.
 
 `SecureASGI` validates HTTP Basic before **all** Gradio/FastAPI routes, including config, info, queue, API, file and login paths. Its verified principal feeds Gradio's `auth_dependency`; callback usernames are injected by Gradio, never accepted from a JSON username field. Cross-origin browser requests are refused unless Origin matches Host; missing Origin remains valid for authenticated CLI clients. Untrusted forwarded headers are not used to establish identity. A future reverse proxy must preserve the intended Host and supply TLS.
 
-The server policy owns sessions by authenticated user plus session hash. Reusing another user's hash is refused for request bodies and SSE query parameters before Gradio, and again at callback lookup. History, pending SQL, budget, results, and logger are server-owned; callback inputs are only the new question and the framework-injected Request. Chat history/Gradio state are not inputs and cannot carry forged file payloads. Duplicate/concurrent work uses a per-session lock; a server semaphore admits one application operation across accounts.
+The server policy owns sessions by authenticated user, opaque browser visit, and session hash. Reusing another user's or browser's hash is refused for request bodies and SSE query parameters before Gradio, and again at callback lookup. History, pending SQL, budget, results, and logger are server-owned; callback inputs are only the new question and the framework-injected Request. Chat history/Gradio state are not inputs and cannot carry forged file payloads. Duplicate/concurrent work uses a per-session lock; a server semaphore admits one application operation across accounts.
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |
-| `APP_QUESTIONS_PER_HOUR` | 2 | Per authenticated user, rolling hour |
-| `APP_QUESTIONS_PER_DAY` | 10 | Per authenticated user, rolling 24 hours |
-| `APP_MODEL_CALLS_PER_HOUR` | 24 | Per user; every attempted completion/retry |
+| `APP_QUESTIONS_PER_HOUR` | 2 | Per browser visit, rolling hour |
+| `APP_QUESTIONS_PER_DAY` | 10 | Per browser visit, rolling 24 hours |
+| `APP_MODEL_CALLS_PER_HOUR` | 24 | Per browser visit; every attempted completion/retry |
 | `APP_GLOBAL_MODEL_CALLS_PER_DAY` | 120 | Across users, rolling 24 hours |
-| `APP_REQUESTS_PER_HOUR` | 240 | All authenticated HTTP requests per user |
-| `APP_MAX_SESSIONS_PER_USER` | 4 | Bounds active server session storage |
-| `APP_SESSION_TTL_SECONDS` | 3,600 | Idle session expiry/cancellation |
+| `APP_REQUESTS_PER_HOUR` | 240 | Mutating requests and queue requests per browser visit; excludes assets, config, refreshes and deadline polling |
+| `APP_MAX_SESSIONS_PER_USER` | 4 | Maximum active Gradio sessions per browser visit |
+| `APP_SESSION_TTL_SECONDS` | 1,800 | Fixed browser visit deadline; configurable only up to 30 minutes |
 | `APP_QUEUE_SIZE` | 8 | Maximum queued UI events |
 
-Session resets/new browser tabs do not reset account allowances. Counts use monotonic rolling windows, not a midnight reset. Inactive sessions expire; the user count is limited to 20 configured identities. Request bodies have a 64 KiB cap and a five-second read deadline. WebSockets, unused stream/call/component-server routes, uploads, proxies, and download/file routes are refused. The SSE queue path remains supported. Events share concurrency one, expose no named client API, and `api_open=False` prevents direct `/run`/`/api` requests bypassing the queue. Hiding API docs alone would not provide these protections.
+Session resets/new browser tabs do not reset visit allowances or extend the deadline. The server owns each random visit token in an HttpOnly, SameSite=Strict cookie (Secure over HTTPS). At expiry, subsequent requests, callbacks, model attempts and database reads are refused, outstanding budgets are cancelled, and the browser removes the controls and displays a contact-developer message. Clearing cookies or changing browsers starts a new visit; the global daily model cap still applies. Visit tokens are capped at 10,000 per process, including expired tombstones, and process restart invalidates existing browser cookies. Counts use monotonic rolling windows, not a midnight reset. Inactive sessions expire; the user count is limited to 20 configured identities. Request bodies have a 64 KiB cap and a five-second read deadline. WebSockets, unused stream/call/component-server routes, uploads, proxies, and download/file routes are refused. The SSE queue path remains supported. Events share concurrency one, expose no named client API, and `api_open=False` prevents direct `/run`/`/api` requests bypassing the queue. Hiding API docs alone would not provide these protections.
 
 Model calls require a trusted private or explicit local operator context, in addition to Milestone 5's 12-attempt/300-second default pipeline allowance. Private calls charge the policy before network execution. Local CLI evaluation/smoke entrypoints establish an operator context explicitly and retain operation budgets; they are not browser callbacks. The limits constrain attempts, not an exact dollar invoice. Lost responses/remote work continuing after cancellation can have unknown charges. A cancelled physical worker may outlive the single active application operation; no hard remote concurrency/cancellation guarantee is claimed.
 
-**Single-process limitation:** quotas and session ownership are in memory. A process restart clears them; multiple workers/replicas would maintain independent allowances and incompatible session registries. Run one process/replica for the initial demo. Do not enable autoscaling/multiple Uvicorn workers without shared authenticated quotas/session infrastructure. Account limits are a private-demo safeguard, not comprehensive protection against stolen credentials or distributed abuse.
+**Single-process limitation:** quotas and session ownership are in memory. A process restart clears them; multiple workers/replicas would maintain independent allowances and incompatible session registries. Run one process/replica for the initial demo. Do not enable autoscaling/multiple Uvicorn workers without shared authenticated quotas/session infrastructure. Visit limits are a private-demo safeguard, not comprehensive protection against stolen credentials or distributed abuse.
 
 ## Diagnostics and files
 
