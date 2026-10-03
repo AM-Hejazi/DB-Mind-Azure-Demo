@@ -46,6 +46,16 @@ and persistent account expiry. Usage caps may stop a visit before 30 minutes.
 Visits are in memory; process restart invalidates old visit cookies. Open a fresh
 private browser window once after this update to avoid an obsolete cookie.
 
+## Follow-up refinement update — 3 October 2026
+
+The current runtime is revision `dbmind-demo--0000009`, source
+`f4e4c9b2971d677ad1fe81e77d28586f4926d1c6`. It preserves the thesis's
+Feedback → CG → Validator loop and reviewed, bounded Analyzer recovery.
+**110 tests and CI passed**, plus a hosted 12-month → six-month conversation.
+See [the follow-up verification report](followup-verification.md) and
+[current immutable image/verification receipt](deployment-followup-receipt.json).
+The earlier acceptance and session-only receipts below document prior revisions.
+
 ## Hosted database evidence
 
 Checks ran inside the deployed Container App through the project's Python/ODBC
