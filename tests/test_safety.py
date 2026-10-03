@@ -220,7 +220,8 @@ class ServiceTests(unittest.TestCase):
     def test_feedback_proposal_needs_separate_confirmation_and_revalidation(self):
         session=self.service.submit('question',self.request)
         session.state.update(finished=True,final_q='question',sql='SELECT 1',rows=[],columns=['n'],selected={})
-        with patch('src.frontdesk.fd_feedback',return_value=('<RUN_SQL>SELECT 1</RUN_SQL>',False,[])),patch('src.service.prepare_read',return_value='SELECT 1'):
+        from src.frontdesk import FeedbackDecision
+        with patch('src.frontdesk.fd_feedback',return_value=(FeedbackDecision('propose','Revised query','SELECT 1','revised question'),[])),patch('src.service.prepare_read',return_value='SELECT 1'):
             self.service.advance(self.request)
         self.service.database_factory.assert_not_called()
         self.assertEqual(session.state['pending_sql'],'SELECT 1')
