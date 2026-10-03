@@ -5,16 +5,17 @@ from types import SimpleNamespace
 import json
 import sqlite3
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch,MagicMock
 
 from src.access import AccessPolicy,load_access_settings
 from src.frontdesk import fd_feedback
 from src.llm_client import LLMError
 from src.service import SessionService
 from src.settings import load_settings,configured
+from src.query_generator import generate_sql_query as real_generate_sql_query
 from src.sql_gate import SQLGateError
 from src.discovery import refresh
-from src.database import Database
+from src.database import Database,DatabaseError
 from synthetic_demo.seed import seed_sqlite
 
 QUESTION12='Which assets have no recorded failure events in the last 12 months?'
@@ -46,10 +47,12 @@ class FollowupTests(unittest.TestCase):
         self.session.state.pop('pending_message')
         self.model=self.enterContext(patch('src.frontdesk.LLMClient'))
         self.client=self.model.return_value
+        self.generator=self.enterContext(patch('src.query_generator.generate_sql_query',return_value='<FINAL_ANSWER>'+SQL6+'</FINAL_ANSWER>'))
         self.enterContext(patch('src.db_connection.connect_sqlserver',side_effect=AssertionError('Unexpected Azure call')))
 
     def response(self,action='propose',sql=None,question=QUESTION6,reply='Use a six-month window.'):
-        self.client.chat_json.return_value={'action':action,'reply':reply,'sql':[SQL6] if sql is None and action=='propose' else sql or [],'question':question}
+        self.generator.return_value='<FINAL_ANSWER>'+(sql[0] if sql else SQL6)+'</FINAL_ANSWER>'
+        self.client.chat_json.return_value={'action':action,'reply':reply,'question':question}
 
     def turn(self,text):
         self.service.submit(text,self.request)
@@ -60,6 +63,8 @@ class FollowupTests(unittest.TestCase):
         self.turn('how about last 6 months')
         state=self.session.state
         self.assertEqual(state['pending_sql'],SQL6)
+        self.assertEqual(self.generator.call_args.args,(QUESTION6,state['selected'],'Difficult'))
+        self.assertEqual(self.generator.call_args.kwargs['revision_context']['previous_sql'],SQL12)
         self.assertEqual(state['query_attempts'],1)
         self.assertEqual(state['rows'],self.initial_rows)
         self.assertEqual(state['final_q'],QUESTION12)
@@ -94,7 +99,8 @@ class FollowupTests(unittest.TestCase):
         self.assertEqual(data['latest_request']['value'],'und die letzten 6 Monate?')
         self.assertIn('und die letzten 6 Monate?',data['chat_history_text']['value'])
         self.assertEqual(decision.reply,'Vorschlag für die letzten sechs Monate.')
-        self.assertEqual(decision.sql,SQL6)
+        self.assertEqual(decision.question,QUESTION6)
+        self.generator.assert_not_called()
         self.assertEqual(data['dialect']['value'],'sqlite')
 
     def test_clarification_or_failure_invalidates_old_proposal(self):
@@ -138,3 +144,64 @@ class FollowupTests(unittest.TestCase):
         self.assertNotIn('pending_sql',self.session.state)
         self.turn('/execute')
         self.assertIn('No pending query',self.session.history[-1]['content'])
+
+    def test_analyzer_repairs_failed_revision_as_a_new_reviewed_proposal_only(self):
+        self.response();self.turn('how about last 6 months')
+        repaired=SQL6+' LIMIT 50'
+        failing=MagicMock();failing.query.side_effect=DatabaseError('query','Safe synthetic query failure')
+        with patch.object(self.service,'database_factory',return_value=failing), \
+             patch('src.analyzer.analyze_failure',return_value=(repaired,'Preserved six-month filter.')) as analyzer:
+            self.turn('/execute')
+            analyzer.assert_called_once_with(QUESTION6,self.session.state['selected'],SQL6,'Safe synthetic query failure')
+            failing.query.assert_called_once()
+        self.assertEqual(self.session.state['query_attempts'],2)
+        self.assertEqual(self.session.state['final_q'],QUESTION12)
+        self.assertEqual(self.session.state['rows'],self.initial_rows)
+        self.assertEqual(self.session.state['pending_sql'],repaired)
+        self.assertEqual(self.session.state['feedback_repairs'],1)
+        self.turn('/execute')
+        self.assertEqual(self.session.state['query_attempts'],3)
+        self.assertEqual(self.session.state['final_q'],QUESTION6)
+        self.assertEqual(len(self.session.state['rows']),4)
+
+    def test_connectivity_failures_never_invoke_analyzer(self):
+        self.response();self.turn('how about last 6 months')
+        failing=MagicMock();failing.query.side_effect=DatabaseError('connectivity','Safe connection failure')
+        with patch.object(self.service,'database_factory',return_value=failing),patch('src.analyzer.analyze_failure') as analyzer:
+            self.turn('/execute');analyzer.assert_not_called()
+        self.assertEqual(self.session.state['rows'],self.initial_rows)
+        self.assertNotIn('pending_sql',self.session.state)
+
+    def test_empty_revised_result_is_success_and_needs_no_analyzer(self):
+        empty=SQL6.replace('ORDER BY e.equipment_id','AND e.equipment_id<0 ORDER BY e.equipment_id')
+        self.response(sql=[empty]);self.turn('how about last 6 months')
+        with patch('src.analyzer.analyze_failure') as analyzer:
+            self.turn('/execute');analyzer.assert_not_called()
+        self.assertEqual(self.session.state['rows'],[])
+        self.assertEqual(self.session.state['final_q'],QUESTION6)
+        self.assertIn('successful empty result',self.session.history[-1]['content'])
+
+    def test_failed_analyzer_repair_cannot_start_another_repair_cycle(self):
+        self.response();self.turn('how about last 6 months')
+        failing=MagicMock();failing.query.side_effect=DatabaseError('query','Safe query failure')
+        with patch.object(self.service,'database_factory',return_value=failing), \
+             patch('src.analyzer.analyze_failure',return_value=(SQL6,'Repair proposal.')) as analyzer:
+            self.turn('/execute');self.turn('/execute')
+            self.assertEqual(analyzer.call_count,1)
+        self.assertEqual(self.session.state['query_attempts'],3)
+        self.assertEqual(self.session.state['final_q'],QUESTION12)
+        self.assertNotIn('pending_sql',self.session.state)
+
+    def test_candidate_generator_gets_updated_question_and_explicit_prior_context(self):
+        context={'previous_question':QUESTION12,'previous_sql':SQL12,'latest_request':'how about last 6 months'}
+        with configured(self.settings),patch('src.query_generator.LLMClient') as cg:
+            cg.return_value.chat_json.return_value={'language':'en','explanation':'Six-month window.','sql':SQL6}
+            generated=real_generate_sql_query(QUESTION6,self.session.state['selected'],'Simple',revision_context=context)
+        cg.assert_called_once_with(stage='CG')
+        messages=cg.return_value.chat_json.call_args.kwargs['messages']
+        data=json.loads(messages[1]['content'])
+        self.assertEqual(data['QUESTION']['value'],QUESTION6)
+        self.assertEqual(data['REVISION_CONTEXT']['previous_sql']['value'],SQL12)
+        self.assertEqual(data['REVISION_CONTEXT']['latest_request']['value'],'how about last 6 months')
+        self.assertIn('preserving the previous query intent',messages[0]['content'])
+        self.assertIn(SQL6,generated)

@@ -145,9 +145,19 @@ An image-only Container App update preserves the hosted secret.
 
 After a result, ask naturally—for example, “how about last 6 months” or
 “change the query to the last 6 months.” DB-Mind proposes a replacement read
-query using the current question, SQL, schema and the latest request. Review
+query through the Feedback → Candidate Generator (CG) → validation loop, using
+the current question, SQL, schema and latest request. Review
 the proposal in the conversation and send `/execute` to run it. Existing
 results remain visible until confirmation succeeds; subsequent follow-ups
 then use the updated question and results. Clarifications or a new revision
 invalidate an older unexecuted proposal. The SQL safety gate, runtime permission
 guard, visit expiry and model/query limits apply to follow-ups as well.
+
+The follow-up path preserves the thesis's agent roles: Feedback interprets the
+update; CG creates SQL using the selected schema and prior query context; the
+Validator boundary checks and executes the approved read. Only an actual query
+error can invoke Analyzer, at most once for follow-up repair. Its repaired SQL
+is a new proposal requiring another `/execute`, and the original result remains
+visible until a revised read succeeds. Empty results and connectivity failures
+do not invoke repair. This engineering demo's bounded checks are not thesis
+accuracy scores or a claim of complete semantic validation.

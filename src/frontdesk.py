@@ -76,7 +76,6 @@ def fd_chat_step(chat_history, user_input, schema_block, sample_values_block, pr
 class FeedbackDecision:
     action: str
     reply: str
-    sql: str | None
     question: str
 
 
@@ -110,16 +109,14 @@ def fd_feedback(chat_history, final_question, sql_query, result_rows, selected_s
           'dialect':load_settings().dialect}
     response=LLMClient(stage='FA',provider=provider).chat_json(
         stage_messages(load_fd_feedback_template(),data),
-        {'action':str,'reply':str,'sql':list,'question':str},temperature=0.2)
+        {'action':str,'reply':str,'question':str},temperature=0.2)
+    if (set(response)!={'action','reply','question'} or
+        any(not isinstance(response[key],str) or not response[key].strip() for key in response)):
+        raise LLMError('malformed','Feedback response has an invalid revision request')
     action=response['action']
-    queries=response['sql']
     question=response['question'].strip()
-    if (action not in {'propose','explain','clarify'} or len(question)>2000 or
-        (action=='propose' and (len(queries)!=1 or not isinstance(queries[0],str) or
-         not queries[0].strip() or len(queries[0])>12000 or '\x00' in queries[0])) or
-        (action!='propose' and queries)):
-        raise LLMError('malformed','Feedback response has an invalid query proposal')
-    decision=FeedbackDecision(action,response['reply'],queries[0].strip() if queries else None,
-                              question if action=='propose' else final_question)
+    if action not in {'propose','explain','clarify'} or len(question)>2000:
+        raise LLMError('malformed','Feedback response has an invalid revision request')
+    decision=FeedbackDecision(action,response['reply'],question if action=='propose' else final_question)
     history=[*chat_history,{'role':'assistant','content':decision.reply}]
     return decision,history
