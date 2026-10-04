@@ -16,7 +16,7 @@ in code are not a guarantee of future provider availability.
 | `LLM_PROVIDER` | `deepseek`; all other values rejected |
 | `DEEPSEEK_API_KEY` | No default; required only for live calls; excluded from settings repr/config/evidence |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com`; only this or its `/v1` form allowed |
-| `DEEPSEEK_MODEL` | `deepseek-flash`; the two verified identifiers only |
+| `DEEPSEEK_MODEL` | `deepseek-flash`; the two identifiers accepted by this release |
 | `DEEPSEEK_{STAGE}_MODEL` | Optional override for CG/SR/AN/FA/QC/QF/TR/EV; inherits default |
 | `DEEPSEEK_THINKING` | `disabled` or explicitly `enabled` |
 | `DEEPSEEK_REASONING_EFFORT` | `low`; `low/high/max` accepted, sent only when thinking is enabled |

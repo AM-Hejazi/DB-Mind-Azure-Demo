@@ -42,7 +42,7 @@ az provider register --namespace Microsoft.ContainerRegistry
 az provider register --namespace Microsoft.ManagedIdentity
 az extension add --name containerapp --upgrade
 az acr create --resource-group "$DBMIND_GROUP" --name "$DBMIND_REGISTRY" \
-  --location "$DBMIND_REGION" --sku Basic --admin-enabled false
+  --location "$DBMIND_REGION" --sku Basic --admin-enabled false --role-assignment-mode rbac
 az identity create --resource-group "$DBMIND_GROUP" --name "$DBMIND_IDENTITY" \
   --location "$DBMIND_REGION"
 az containerapp env create --resource-group "$DBMIND_GROUP" \
@@ -56,7 +56,8 @@ az role assignment create --assignee-object-id "$DBMIND_PULL_PRINCIPAL" \
 ```
 
 The registry setup uses standard RBAC with registry-scoped `AcrPull`; use the
-appropriate repository role if you deliberately choose an ABAC-enabled registry.
+appropriate repository role if you deliberately choose an ABAC-enabled registry;
+see [Azure registry role guidance](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-rbac-built-in-roles-overview).
 No SQL resources or firewall rules are created by these hosting commands.
 
 ## Prepare private deployment configuration
