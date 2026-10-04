@@ -1,24 +1,25 @@
 # Deploy DB-Mind with your Azure resources
 
-This guide publishes the approved synthetic demonstration to Azure Container Apps
-using your own Azure SQL database, container registry and identity. For a different
-business schema, complete [database adaptation](own-database-setup.md) first;
-changing connection settings alone does not remove the fixture contract.
+This guide publishes DB-Mind to Azure Container Apps using your own SQL database,
+registry and identity. Choose `azure_sql_custom` for an existing business schema
+and run [schema setup](own-database-setup.md) first. `azure_sql` remains the separate
+fictional fixture profile.
 
 ## Prerequisites
 
 - An Azure subscription and permission to create the chosen hosting resources.
 - Azure CLI with Container Apps support, Docker, and Python 3.12 with the locked
   dependencies installed. Sign in with `az login` and select your subscription.
-- A dedicated Azure SQL test database named `dbmind_synthetic_...`, seeded with the
-  [fixture](synthetic-data.md), plus a separate restricted reader. Review SQL
+- Your existing Azure SQL database plus a separate restricted reader. For the
+  fictional demo only, prepare a `dbmind_synthetic_...` fixture database. Review SQL
   firewall/network access yourself; hosting deployment does not change SQL rules.
 - A private DeepSeek key for the included deployer (also required when deploying
   mock mode), separate application login credentials, and optionally admin access.
 
 Managed identity for pulling an image is separate from SQL data access. For
 SQL managed identity authentication, an authorized database owner must provision
-the identity as a contained user and add it to `dbmind_demo_reader`; see
+the identity as a contained user and grant approved read/metadata access (the fictional
+fixture uses `dbmind_demo_reader`); see
 [configuration](configuration.md). SQL-password mode needs a restricted contained
 user and its password supplied privately.
 
@@ -67,8 +68,8 @@ Store a private Docker-style `KEY=value` file outside the repository, for exampl
 [database settings](configuration.md) as a reference, replacing the local profile
 rather than adding conflicting settings.
 
-Set `DB_PROFILE=azure_sql`, `DB_DIALECT=sqlserver`, your server/database, scope
-`demo`, an ignored snapshot path, `DB_DISCOVERY_TIMEOUT_SECONDS=300`, and explicit
+Set `DB_PROFILE=azure_sql_custom`, `DB_DIALECT=sqlserver`, your server/database,
+explicit approved `DB_SCHEMA_SCOPE` and optional `DB_TABLE_SCOPE`, an ignored snapshot path, `DB_DISCOVERY_TIMEOUT_SECONDS=300`, and explicit
 `DB_AUTH`. For SQL-password auth, provide restricted `DB_USER`/`DB_PASSWORD`.
 For token auth, leave them unset. Leave `DB_SQLITE_PATH` unset for Azure.
 Include `APP_USERNAME`/`APP_PASSWORD` or `APP_AUTH`, and `DEEPSEEK_API_KEY`.
@@ -80,7 +81,8 @@ The included template deliberately sets fixed safe deployment defaults: one
 The deployer reads database/authentication/model validation from the private file;
 **it does not forward every env-file option to Azure**. Review
 `infra/container-app.json` for supported environment entries before customizing
-sample limits, quotas or stage models. Add only public settings or secret references
+quotas or stage models. The deployer forwards the custom profile, schema/table
+scope and row/value/total-byte sampling limits. Add only public settings or secret references
 there, never secret values.
 
 ## Test, build and publish
@@ -106,7 +108,7 @@ python -m scripts.deploy_azure \
   --environment "$DBMIND_ENVIRONMENT" --identity "$DBMIND_IDENTITY" \
   --app "$DBMIND_APP" --source-commit "$DBMIND_COMMIT" \
   --image "$DBMIND_LOGIN_SERVER/dbmind@$DBMIND_DIGEST" \
-  --db-auth sql_password --mode mock
+  --db-auth sql_password --mode live
 ```
 
 Use `--db-auth managed_identity` after provisioning SQL access for the identity.
@@ -116,8 +118,9 @@ roles or firewall. Securestring parameters are sent over authenticated HTTPS fro
 memory, without a plaintext parameter file. Do not enable debug HTTP tracing.
 
 Record the source commit and immutable image digest privately for rollback.
-For live model access, rerun with `--mode live` only after mock acceptance. Live
-questions incur provider charges and send bounded database context externally.
+Custom databases require live mode; fixture mock answers are disabled for them.
+For the separate demo profile, start with `--mode mock` then switch to live after
+acceptance. Live questions incur charges and transmit bounded database context.
 
 ## Startup and acceptance
 
@@ -134,8 +137,9 @@ python -m src.discovery inspect
 python -m src.db_check --connect
 ```
 
-Expect nine tables, a complete snapshot and equipment count 60 for the approved
-fixture. Check `/health/ready` returns 200, anonymous `/config` returns 401,
+For custom, compare selected tables/relationships with your expected inventory
+and run the domain-independent connection probe. The separate fixture expects
+nine tables and equipment count 60. Check `/health/ready` returns 200, anonymous `/config` returns 401,
 authenticated UI access works, and file routes remain blocked. Test a reference
 question and a reviewed follow-up. Optional Playwright acceptance:
 
@@ -146,7 +150,9 @@ python -m scripts.hosted_smoke --env-file "$HOME/.config/dbmind/deployment.env" 
   --url https://YOUR_APP_HOST --mode mock
 ```
 
-Browser system dependencies may also be needed. The live smoke mode submits a
+This reference smoke script is fixture-specific; for custom databases, use your
+own approved question/result acceptance instead. Browser system dependencies
+may also be needed. The live fixture smoke mode submits a
 bounded paid reference conversation; it is an explicit opt-in check.
 
 ## Rotate an application password

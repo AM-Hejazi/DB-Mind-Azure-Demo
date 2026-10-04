@@ -9,12 +9,13 @@ Use an external, protected Docker env file or deployment secret store. See
 | Profile | Dialect | Required scope and identity |
 | --- | --- | --- |
 | `local_synthetic` (default) | `sqlite` | Dedicated fixture file with application/schema markers; `main` schema |
+| `azure_sql_custom` | `sqlserver` | Your existing Azure SQL user database; explicit approved schemas and optional tables |
 | `azure_sql` | `sqlserver` | Azure public-cloud SQL FQDN, `dbmind_synthetic_...` database, `demo` schema |
 | `local_sqlserver` | `sqlserver` | Loopback `127.0.0.1,14333` or `localhost,14333`, dedicated synthetic database, `demo` schema |
 
-These profiles deliberately restrict the current release to the approved fixture.
-A different schema needs the integration work in [the adaptation guide](own-database-setup.md#adapting-to-a-different-schema-or-sql-engine).
-No missing-file/connection error falls back to another database.
+The custom profile uses your own catalog and samples; the demo profiles retain
+fixture checks. Follow [custom setup](own-database-setup.md). No missing-file or
+connection error falls back to another database.
 
 ## Connection settings
 
@@ -25,8 +26,9 @@ No missing-file/connection error falls back to another database.
 | `DB_SQLITE_PATH` | `var/synthetic/maintenance_v1.sqlite3`; leave unset for Azure |
 | `DB_SCHEMA_JSON` | `var/synthetic/schema-v1.json`; explicitly required for SQL profiles |
 | `DB_SERVER` | Required for SQL profiles; Azure `YOUR_SERVER.database.windows.net` |
-| `DB_NAME` | Required dedicated `dbmind_synthetic_...` database |
-| `DB_SCHEMA_SCOPE` | `main` for SQLite; explicitly set `demo` for SQL profiles |
+| `DB_NAME` | Your existing database for custom; dedicated `dbmind_synthetic_...` for demo |
+| `DB_SCHEMA_SCOPE` | `main` for SQLite; `demo` for SQL demos; required approved schemas for custom |
+| `DB_TABLE_SCOPE` | Optional comma-separated qualified table subset for custom only |
 | `DB_AUTH` | Azure: `managed_identity`, `azure_cli` or `sql_password`; local SQL Server: `sql_password` |
 | `DB_MANAGED_IDENTITY_CLIENT_ID` | Optional UUID selecting a user-assigned identity |
 | `DB_USER`, `DB_PASSWORD` | Restricted SQL-password identity only; unset both for token auth |
@@ -51,7 +53,8 @@ Docker `azure` target includes the OS driver. SQL connections use verified TLS.
 provide the enforcement boundary.
 
 Use a dedicated restricted reader, separate from database provisioning credentials.
-For the approved fixture, a database owner applies
+For custom databases, use your own restricted reader grants on selected objects;
+do not apply fixture provisioning SQL. For the approved fixture, a database owner applies
 `data/synthetic/v1/runtime-permissions.tsql.sql` and adds the runtime user to
 `dbmind_demo_reader`. It grants object-specific SELECT/VIEW DEFINITION and denies
 write/setup/execute privileges. Provision a contained SQL-password user securely,
@@ -72,7 +75,7 @@ mapped database user instead of an Azure contained-user recipe.
 
 Runtime checks reject elevated roles, effective write/control/schema permissions,
 and impersonation grants, including inherited role grants. Required SELECT on
-fixture tables is checked before query execution. Unknown mandatory permission
+approved tables is checked before query execution. Unknown mandatory permission
 results fail closed; do not broaden grants to silence guard failures.
 
 ## Validate before serving
@@ -85,7 +88,8 @@ python -m src.db_check --connect
 
 The first command validates settings without connecting. Preflight and `--connect`
 read the configured database (network/authentication for SQL profiles), never seed
-it or call a model. The connection check expects 60 fixture equipment rows.
+it or call a model. The demo connection check expects 60 equipment rows; the custom check probes one
+approved table without domain-specific assumptions.
 
 Each query uses a fresh connection/cursor with bounded output and statement timeout.
 Limits do not bound all server work or driver allocation for a single large value.

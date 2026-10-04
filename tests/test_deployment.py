@@ -20,7 +20,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn('value',by_name['APP_AUTH'])
         self.assertNotIn('value',by_name['DEEPSEEK_API_KEY'])
         self.assertNotIn('DB_SQLITE_PATH',by_name)
-        self.assertEqual(by_name['DB_PROFILE']['value'],'azure_sql')
+        self.assertEqual(by_name['DB_PROFILE']['value'],"[parameters('dbProfile')]")
+        self.assertEqual(self.template['parameters']['dbProfile']['defaultValue'],'azure_sql')
+        self.assertEqual(self.template['parameters']['dbSchemaScope']['defaultValue'],'demo')
+        self.assertEqual(self.template['parameters']['dbProfile']['allowedValues'],['azure_sql','azure_sql_custom'])
         self.assertEqual(by_name['DB_DIALECT']['value'],'sqlserver')
 
     def test_https_private_boundary_and_single_replica_contract(self):

@@ -40,6 +40,7 @@ class Settings:
     sample_scan_rows: int = 10000
     discovery_timeout_seconds: int = 30
     context_chars: int = 16000
+    table_scope: tuple[str, ...] = ()
 
     def public_database_config(self):
         """Legacy dictionary bridge deliberately excludes credentials and hosts."""
@@ -87,14 +88,33 @@ def load_settings(environ=None):
         return candidate if candidate.is_absolute() else ROOT / candidate
 
     profile = value("DB_PROFILE", "local_synthetic").lower()
-    if profile not in {"local_synthetic", "azure_sql", "local_sqlserver"}:
-        raise SettingsError("DB_PROFILE must be local_synthetic, azure_sql, or local_sqlserver")
+    if profile not in {"local_synthetic", "azure_sql", "local_sqlserver", "azure_sql_custom"}:
+        raise SettingsError("DB_PROFILE must be local_synthetic, azure_sql, local_sqlserver, or azure_sql_custom")
     dialect = "sqlite" if profile == "local_synthetic" else "sqlserver"
     if value("DB_DIALECT", dialect).lower() != dialect:
         raise SettingsError("DB_DIALECT conflicts with DB_PROFILE; select the profile explicitly")
     scope = tuple(value("DB_SCHEMA_SCOPE", "demo" if dialect == "sqlserver" else "main").split(","))
-    if scope != (("main",) if dialect == "sqlite" else ("demo",)):
-        raise SettingsError("DB_SCHEMA_SCOPE must be main for local_synthetic or demo for SQL Server")
+    custom = profile == "azure_sql_custom"
+    raw_tables=value("DB_TABLE_SCOPE")
+    if raw_tables and any(not part.strip() for part in raw_tables.split(',')):
+        raise SettingsError('DB_TABLE_SCOPE must not contain empty entries')
+    table_scope = tuple(part.strip() for part in raw_tables.split(",") if part.strip())
+    if custom:
+        scope = tuple(part.strip() for part in scope)
+        if (not value("DB_SCHEMA_SCOPE") or not 1 <= len(scope) <= 16 or
+            len({name.casefold() for name in scope}) != len(scope) or
+            any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) or
+                name.casefold() in {"sys", "information_schema"} for name in scope)):
+            raise SettingsError("Custom DB_SCHEMA_SCOPE requires explicit distinct user schema names")
+        if len(table_scope) > 500 or len({name.casefold() for name in table_scope}) != len(table_scope):
+            raise SettingsError("DB_TABLE_SCOPE must contain at most 500 distinct qualified tables")
+        for name in table_scope:
+            schema, separator, table = name.partition('.')
+            if (not separator or schema.casefold() not in {x.casefold() for x in scope} or
+                not 1 <= len(table) <= 128 or any(ord(c) < 32 for c in table)):
+                raise SettingsError("DB_TABLE_SCOPE requires schema-qualified tables within DB_SCHEMA_SCOPE")
+    elif scope != (("main",) if dialect == "sqlite" else ("demo",)) or table_scope:
+        raise SettingsError("Demo scope must be main for SQLite or demo for SQL Server; DB_TABLE_SCOPE requires azure_sql_custom")
     server, database, auth = value("DB_SERVER"), value("DB_NAME"), value("DB_AUTH").lower()
     username, password = value("DB_USER"), env.get("DB_PASSWORD", "")
     if "\x00" in username or "\x00" in password:
@@ -111,11 +131,14 @@ def load_settings(environ=None):
         for name in ("DB_SERVER", "DB_NAME", "DB_AUTH", "DB_SCHEMA_SCOPE", "DB_SCHEMA_JSON"):
             if not value(name):
                 raise SettingsError(f"{name} is required for SQL Server profiles")
-        if not re.fullmatch(r"dbmind_synthetic_[A-Za-z0-9_]+", database):
+        if not custom and not re.fullmatch(r"dbmind_synthetic_[A-Za-z0-9_]+", database):
             raise SettingsError("DB_NAME must identify a dedicated dbmind_synthetic_ database")
         if driver != "ODBC Driver 18 for SQL Server":
             raise SettingsError("DB_DRIVER must be ODBC Driver 18 for SQL Server")
-        if profile == "azure_sql":
+        if custom and (not 1 <= len(database) <= 128 or any(ord(c)<32 for c in database) or
+                       database.casefold() in {"master", "tempdb", "model", "msdb"}):
+            raise SettingsError("Custom DB_NAME must identify an explicit user database")
+        if profile in {"azure_sql", "azure_sql_custom"}:
             if not re.fullmatch(r"[A-Za-z0-9-]+\.database\.windows\.net", server):
                 raise SettingsError("DB_SERVER must be an Azure public-cloud SQL server FQDN")
             if auth not in {"managed_identity", "azure_cli", "sql_password"}:
@@ -150,4 +173,4 @@ def load_settings(environ=None):
                     number("DB_SAMPLE_TOTAL_BYTES", 65536, 1024, 262144),
                     number("DB_SAMPLE_SCAN_ROWS", 10000, 1, 100000),
                     number("DB_DISCOVERY_TIMEOUT_SECONDS", 30, 1, 300),
-                    number("LLM_SCHEMA_CONTEXT_CHARS", 16000, 2000, 32000))
+                    number("LLM_SCHEMA_CONTEXT_CHARS", 16000, 2000, 32000), table_scope)

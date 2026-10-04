@@ -27,7 +27,7 @@ Be easy and open-hearted in selecting table or columns because it is always bett
 
 🔍 Tips:
 - The user may be non-technical. Their language might not match table/column names directly.
-- Use semantic similarity, synonyms, and maintenance knowledge to find related fields.
+- Use semantic similarity, synonyms, and the supplied database descriptions to find related fields.
 - It's okay if only some columns from a table are relevant.
 - Whenever the question implies a time window (“currently”, “last 6 months”, “last week”…), include at least one timestamp column from every selected table so that filtering is possible.
 

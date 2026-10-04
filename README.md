@@ -5,12 +5,16 @@ bounded, read-only SQL queries. Its agents clarify intent, retrieve relevant
 schema, generate and validate SQL, and refine results through conversational
 feedback. Results include a table and the executed SQL.
 
-The architecture is designed for different SQL domains. This release provides
-SQLite and SQL Server/Azure SQL transports with a fictional maintenance dataset
-(nine tables, 3,390 rows). **An unrelated database schema requires adaptation:**
-the current profiles enforce the approved synthetic contract. PostgreSQL/MySQL
-connectors are not included. Start with [your own database setup](docs/own-database-setup.md)
-for the supported deployment path and the implementation needed for another schema.
+Connect **your own Azure SQL database** using the separate `azure_sql_custom`
+profile and [installation guide](docs/own-database-setup.md). An explicit setup
+command extracts accessible tables, columns, keys, relationships and bounded
+samples, then the existing agents use that validated context. Select approved
+schemas and an optional exact table subset; use a restricted read-only identity.
+
+The included fictional maintenance dataset (nine tables, 3,390 rows) remains a
+separate demonstration with its original guards. SQLite and SQL Server demo
+profiles are available; PostgreSQL/MySQL connectors and view/procedure execution
+are not included.
 
 [Hosted demonstration](https://dbmind-demo.lemonflower-af0fa12b.southafricanorth.azurecontainerapps.io)
 requires an invited account. To run an independent deployment, use your own Azure
@@ -76,8 +80,8 @@ provider. The sample dataset uses 1 October 2026 UTC as its reference date.
 
 ## Set up your Azure SQL deployment
 
-1. Follow [database setup](docs/own-database-setup.md) to prepare an approved test
-   database and separate restricted reader. Application startup never seeds SQL.
+1. Follow [database setup](docs/own-database-setup.md) to configure your existing Azure SQL
+   database and a separate restricted reader. Application startup never seeds SQL.
 2. Configure the connection privately using [configuration](docs/configuration.md).
    Environment variables are explicit; `.env` is not automatically loaded.
 3. Run schema/sample extraction and inspect the snapshot with

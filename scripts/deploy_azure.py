@@ -88,8 +88,10 @@ def main():
     access = load_access_settings(env)
     users = tuple(pair for pair in access.users if pair[0] not in access.admins)
     load_llm_settings(env)
-    if settings.profile != 'azure_sql' or not users:
+    if settings.profile not in {'azure_sql','azure_sql_custom'} or not users:
         raise ValueError('Azure SQL and private application authentication are required')
+    if settings.profile == 'azure_sql_custom' and args.mode != 'live':
+        raise ValueError('Custom databases require --mode live; fixture mock responses are disabled')
     if not env.get('DEEPSEEK_API_KEY'):
         raise ValueError('Private DeepSeek key is required; its value is never displayed')
     account = az('account', 'show')
@@ -103,6 +105,9 @@ def main():
         'environmentId': environment['id'], 'identityId': identity['id'],
         'identityClientId': identity['clientId'], 'registryServer': registry['loginServer'],
         'image': args.image, 'dbServer': settings.server, 'dbName': settings.database,
+        'dbProfile': settings.profile, 'dbSchemaScope': ','.join(settings.schemas),
+        'dbTableScope': ','.join(settings.table_scope), 'dbSampleRows': settings.sample_rows,
+        'dbSampleValueChars': settings.sample_value_chars, 'dbSampleTotalBytes': settings.sample_total_bytes,
         'dbAuth': args.db_auth, 'sqlUser': settings.username,
         'sqlPassword': settings.password if args.db_auth == 'sql_password' else '',
         'appAuth': ','.join(user+':'+password for user,password in users),
