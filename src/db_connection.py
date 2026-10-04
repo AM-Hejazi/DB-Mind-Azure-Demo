@@ -57,9 +57,9 @@ def connect_sqlserver(settings):
     return connection
 
 
-def require_read_principal(cursor, require_all_tables=True):
+def _require_identity(cursor, schema="demo"):
     """Reject effective write/setup privileges, including custom role grants."""
-    cursor.execute("SELECT CURRENT_USER, IS_MEMBER('db_owner'), IS_MEMBER('db_datawriter'), "
+    statement = ("SELECT CURRENT_USER, IS_MEMBER('db_owner'), IS_MEMBER('db_datawriter'), "
                    "IS_MEMBER('db_ddladmin'), CASE WHEN "
                    + " OR ".join(f"IS_SRVROLEMEMBER('{role}')=1" for role in (
                        "sysadmin", "securityadmin", "serveradmin", "setupadmin", "processadmin", "diskadmin", "dbcreator", "bulkadmin"))
@@ -75,6 +75,10 @@ def require_read_principal(cursor, require_all_tables=True):
                    "HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER ANY SCHEMA'), "
                    "HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE VIEW'), "
                    "HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE PROCEDURE')")
+    if schema == "demo":
+        cursor.execute(statement)
+    else:
+        cursor.execute(statement.replace("HAS_PERMS_BY_NAME('demo',", "HAS_PERMS_BY_NAME(?,"), (schema, schema))
     row = cursor.fetchone()
     # Server-role visibility can be NULL in Azure; object permissions below are mandatory.
     if (not row or len(row) != 17 or str(row[0]).lower() == "dbo" or any(value != 0 for value in row[1:4])
@@ -94,6 +98,11 @@ def require_read_principal(cursor, require_all_tables=True):
     for target in cursor.fetchall():
         if len(target) != 2 or target[1] != 0:
             raise PermissionError("Runtime identity must not impersonate other users")
+
+
+def require_read_principal(cursor, require_all_tables=True):
+    """Preserved synthetic principal and nine-table checks."""
+    _require_identity(cursor)
     for table in TABLES:
         object_name = "demo." + table.name
         cursor.execute("SELECT HAS_PERMS_BY_NAME(?, 'OBJECT', 'SELECT'), "
@@ -111,3 +120,54 @@ def require_read_principal(cursor, require_all_tables=True):
             continue
         if not permissions or permissions[0] != 1 or any(value != 0 for value in permissions[1:]):
             raise PermissionError("Runtime table permissions must be SELECT-only")
+
+
+def require_custom_read_principal(cursor, settings):
+    """Effective permissions, not direct-grant lists; no unknown results accepted."""
+    _require_identity(cursor, settings.schemas[0])
+    cursor.execute("SELECT DB_NAME(), HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'EXECUTE')")
+    row=cursor.fetchone()
+    if not row or len(row)!=2 or row[0]!=settings.database or row[1]!=0:
+        raise PermissionError('Custom database identity must match and have no database EXECUTE grant')
+    for schema in settings.schemas:
+        permissions=('ALTER','CONTROL','INSERT','UPDATE','DELETE','EXECUTE')
+        cursor.execute('SELECT '+', '.join("HAS_PERMS_BY_NAME(?, 'SCHEMA', '"+p+"')" for p in permissions), (schema,)*len(permissions))
+        row=cursor.fetchone()
+        if not row or len(row)!=len(permissions) or any(v!=0 for v in row):
+            raise PermissionError('Custom schema permissions must be known and read-only')
+    # Any object permission makes its target visible. Evaluate table/view writes
+    # across the database, including outside the configured query scope. Bulk SQL
+    # keeps permission checks bounded in round trips as the catalog grows.
+    qualified="QUOTENAME(s.name)+N'.'+QUOTENAME(o.name)"
+    permissions=('SELECT','INSERT','UPDATE','DELETE','ALTER','CONTROL')
+    fields=', '.join("HAS_PERMS_BY_NAME("+qualified+", 'OBJECT', '"+p+"')" for p in permissions)
+    cursor.execute("SELECT s.name,o.name,o.type,"+fields+", CASE WHEN EXISTS (SELECT 1 FROM sys.columns c "
+                   "WHERE c.object_id=o.object_id AND (HAS_PERMS_BY_NAME("+qualified+", 'OBJECT', 'UPDATE', c.name, 'COLUMN') IS NULL "
+                   "OR HAS_PERMS_BY_NAME("+qualified+", 'OBJECT', 'UPDATE', c.name, 'COLUMN')<>0)) THEN 1 ELSE 0 END "
+                   "FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id "
+                   "WHERE o.is_ms_shipped=0 AND o.type IN ('U','V') ORDER BY s.name,o.name")
+    objects=cursor.fetchmany(1001)
+    if not objects or len(objects)>1000:
+        raise PermissionError('Custom permission inventory missing or exceeds 1000 visible tables/views')
+    found=set()
+    scopes={s.casefold() for s in settings.schemas}
+    allowed={n.casefold() for n in settings.table_scope}
+    for obj in objects:
+        if len(obj)!=10:raise PermissionError('Custom permission inventory is malformed')
+        schema,name,kind,*values=obj
+        if any(v not in (0,1) for v in values) or any(v!=0 for v in values[1:]):
+            raise PermissionError('Custom object/column permissions must be known with no effective writes')
+        full=schema+'.'+name
+        if kind.strip()=='U' and schema.casefold() in scopes and (not allowed or full.casefold() in allowed):
+            if values[0]!=1:raise PermissionError('Approved custom tables require SELECT on every column')
+            found.add(full.casefold())
+    if not found or (allowed and found!=allowed):
+        raise PermissionError('Approved custom table visibility is incomplete')
+    # Reject effective user-procedure execution and module alteration/control.
+    cursor.execute("SELECT CASE WHEN o.type IN ('P','PC','FN','FS') THEN HAS_PERMS_BY_NAME("+qualified+", 'OBJECT', 'EXECUTE') ELSE 0 END, "
+                   "HAS_PERMS_BY_NAME("+qualified+", 'OBJECT', 'ALTER'), HAS_PERMS_BY_NAME("+qualified+", 'OBJECT', 'CONTROL') "
+                   "FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id "
+                   "WHERE o.is_ms_shipped=0 AND o.type IN ('P','PC','FN','FS','IF','TF','FT','AF')")
+    modules=cursor.fetchmany(1001)
+    if len(modules)>1000 or any(len(row)!=3 or any(v!=0 for v in row) for row in modules):
+        raise PermissionError('Custom runtime identity must not execute or control user modules')

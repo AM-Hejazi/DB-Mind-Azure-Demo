@@ -23,16 +23,17 @@ def approved_metadata(settings):
     try:
         tables = read_snapshot(settings)['metadata']['tables']
     except (SnapshotError, OSError, KeyError):
-        raise SQLGateError('A valid synthetic schema snapshot is required; run explicit preflight') from None
+        raise SQLGateError(('A valid schema snapshot' if settings.profile == 'azure_sql_custom' else 'A valid synthetic schema snapshot')+' is required; run explicit preflight') from None
+    custom = settings.profile == 'azure_sql_custom'
     fixture = {table.name.casefold() for table in TABLES}
     approved = {}
     for full, table in tables.items():
-        if table['schema'] in settings.schemas and table['name'].casefold() in fixture:
+        if table['schema'].casefold() in {s.casefold() for s in settings.schemas} and (custom or table['name'].casefold() in fixture):
             key = full.casefold()
             if key in approved:
                 raise SQLGateError('Ambiguous discovered object names')
             approved[key] = table
-    if len(approved) != len(fixture):
+    if not approved or (not custom and len(approved) != len(fixture)):
         raise SQLGateError('The complete approved synthetic fixture must be visible')
     return approved
 
@@ -102,7 +103,12 @@ def prepare_read(sql, settings, parameters=()):
                     continue
                 if not isinstance(source, exp.Table):
                     raise SQLGateError('Unresolved SQL source')
-                owner = source.db or settings.schemas[0]
+                if settings.profile == 'azure_sql_custom' and not source.db:
+                    candidates=[t for t in allowed.values() if t['name'].casefold()==source.name.casefold()]
+                    if len(candidates)!=1:raise SQLGateError('Qualify an unknown or ambiguous table with its schema')
+                    owner=candidates[0]['schema']
+                else:
+                    owner = source.db or settings.schemas[0]
                 full = f'{owner}.{source.name}'.casefold()
                 if full not in allowed:
                     raise SQLGateError('Query references an object outside the discovered runtime allowlist')

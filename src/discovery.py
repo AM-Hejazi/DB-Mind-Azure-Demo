@@ -21,9 +21,11 @@ def sample_table(reader, table):
     cap = s.sample_scan_rows + 1
     probe = (f'SELECT COUNT(*) AS n FROM (SELECT TOP ({cap}) 1 AS v FROM {qualified}) q'
              if s.dialect == 'sqlserver' else f'SELECT COUNT(*) AS n FROM (SELECT 1 FROM {qualified} LIMIT {cap}) q')
-    count = reader.query(probe)[0][0][0]
-    if count > s.sample_scan_rows:
-        return {'status': 'skipped_large', 'rows': [], 'population_at_least': count}
+    custom=s.profile == 'azure_sql_custom'
+    if not custom:
+        count = reader.query(probe)[0][0][0]
+        if count > s.sample_scan_rows:
+            return {'status': 'skipped_large', 'rows': [], 'population_at_least': count}
     expressions = []
     for column in table['columns']:
         name = quote(column['name'], s.dialect)
@@ -38,20 +40,26 @@ def sample_table(reader, table):
             expression = name
         expressions.append(expression + ' AS ' + name)
     fields = ', '.join(expressions)
-    sql = (f'SELECT TOP ({s.sample_rows}) {fields} FROM {qualified} ORDER BY NEWID()'
+    sql = (f'SELECT TOP ({s.sample_rows}) {fields} FROM {qualified}' if custom else
+           f'SELECT TOP ({s.sample_rows}) {fields} FROM {qualified} ORDER BY NEWID()'
            if s.dialect == 'sqlserver' else f'SELECT {fields} FROM {qualified} ORDER BY random() LIMIT {s.sample_rows}')
     rows, columns = reader.query(sql)
     values = [{name: scalar(value, s.sample_value_chars) for name, value in zip(columns, row)} for row in rows]
-    return {'status': 'ok' if values else 'empty', 'rows': values, 'population_at_probe': count}
+    result={'status': 'ok' if values else 'empty', 'rows': values}
+    if not custom:result['population_at_probe']=count
+    return result
 
 
 def refresh(settings, reader=None):
     reader = reader or Reader(settings)
     tables, views = discover_catalog(reader)
     if not tables:
-        raise SnapshotError('No accessible tables in the configured synthetic scope')
-    expected = {settings.schemas[0]+'.'+t.name for t in TABLES}
-    missing = sorted(expected - tables.keys())
+        raise SnapshotError('No accessible tables in the configured scope')
+    custom = settings.profile == 'azure_sql_custom'
+    expected = set(settings.table_scope) if custom else {settings.schemas[0]+'.'+t.name for t in TABLES}
+    missing = sorted(name for name in expected if name.casefold() not in {n.casefold() for n in tables})
+    if custom and len(tables) > 500:
+        raise SnapshotError('Custom discovery exceeds the 500-table limit; narrow DB_TABLE_SCOPE')
     samples, used = {}, 0
     for name, table in sorted(tables.items()):
         try:
@@ -72,7 +80,7 @@ def refresh(settings, reader=None):
             samples[name] = {'status': 'unsupported_value', 'rows': []}
     errors = [name for name, sample in samples.items() if sample['status'] not in
               {'ok', 'empty', 'disabled', 'skipped_large', 'byte_limit'}]
-    snapshot = {'format': 'dbmind.snapshot', 'version': FORMAT_VERSION, 'synthetic_only': True,
+    snapshot = {'format': 'dbmind.snapshot', 'version': FORMAT_VERSION, 'synthetic_only': not custom,
         'identity': identity(settings), 'dialect': settings.dialect,
         'extracted_at': datetime.now(timezone.utc).isoformat(),
         'metadata': {'tables': tables, 'views': views}, 'samples': samples,

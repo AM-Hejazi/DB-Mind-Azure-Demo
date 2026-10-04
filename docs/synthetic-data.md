@@ -65,5 +65,5 @@ starting it. Only that loopback lab can opt into trusting a self-signed certific
 Azure connections retain verified TLS. Do not use `sa` for runtime queries.
 
 For independent hosting, follow [Azure deployment](azure-deployment.md). To use
-another schema, follow [the adaptation guide](own-database-setup.md); fixture setup
-is not a migration path for a production database.
+another schema, follow [custom database setup](own-database-setup.md); fixture seeding
+is not needed for an existing business database.

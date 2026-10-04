@@ -5,7 +5,7 @@ import time
 import threading
 
 from synthetic_demo.schema import APPLICATION_ID, VERSION, TABLES
-from .db_connection import connect_sqlserver, require_read_principal, TokenAuthenticationError
+from .db_connection import connect_sqlserver, require_read_principal, require_custom_read_principal, TokenAuthenticationError
 from .settings import load_settings
 
 
@@ -24,7 +24,7 @@ def map_error(error):
     if isinstance(error, PermissionError) or getattr(error, "sqlite_errorcode", None) in {
         sqlite3.SQLITE_AUTH, sqlite3.SQLITE_READONLY
     }:
-        return DatabaseError("permissions", "Use a restricted SELECT-only runtime identity for the synthetic demo tables.")
+        return DatabaseError("permissions", "Use a restricted SELECT-only runtime identity for the approved tables.")
     if isinstance(error, TokenAuthenticationError):
         return DatabaseError("authentication", "Token authentication failed; check the selected identity, Azure CLI login, or managed identity assignment.")
     state = str(error.args[0]) if error.args else ""
@@ -144,7 +144,10 @@ class Database:
                 if cancelled.is_set():
                     raise DatabaseError("timeout", "Database query cancelled")
                 if s.dialect == "sqlserver":
-                    require_read_principal(cursor, require_all_tables=not metadata)
+                    if s.profile == 'azure_sql_custom':
+                        require_custom_read_principal(cursor, s)
+                    else:
+                        require_read_principal(cursor, require_all_tables=not metadata)
                 else:
                     connection.set_progress_handler(lambda: int(cancelled.is_set() or time.monotonic() >= deadline), 1000)
                 if cancelled.is_set():

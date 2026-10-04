@@ -70,6 +70,40 @@
     "appAdminPassword": {
       "type": "securestring",
       "defaultValue": ""
+    },
+    "dbProfile": {
+      "type": "string",
+      "defaultValue": "azure_sql",
+      "allowedValues": [
+        "azure_sql",
+        "azure_sql_custom"
+      ]
+    },
+    "dbSchemaScope": {
+      "type": "string",
+      "defaultValue": "demo"
+    },
+    "dbTableScope": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "dbSampleRows": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 0,
+      "maxValue": 20
+    },
+    "dbSampleValueChars": {
+      "type": "int",
+      "defaultValue": 160,
+      "minValue": 16,
+      "maxValue": 1024
+    },
+    "dbSampleTotalBytes": {
+      "type": "int",
+      "defaultValue": 65536,
+      "minValue": 1024,
+      "maxValue": 262144
     }
   },
   "variables": {
@@ -88,7 +122,7 @@
       },
       {
         "name": "DB_PROFILE",
-        "value": "azure_sql"
+        "value": "[parameters('dbProfile')]"
       },
       {
         "name": "DB_DIALECT",
@@ -116,7 +150,7 @@
       },
       {
         "name": "DB_SCHEMA_SCOPE",
-        "value": "demo"
+        "value": "[parameters('dbSchemaScope')]"
       },
       {
         "name": "DB_SCHEMA_JSON",
@@ -161,6 +195,22 @@
       {
         "name": "DEEPSEEK_API_KEY",
         "secretRef": "deepseek-key"
+      },
+      {
+        "name": "DB_TABLE_SCOPE",
+        "value": "[string(parameters('dbTableScope'))]"
+      },
+      {
+        "name": "DB_SAMPLE_ROWS",
+        "value": "[string(parameters('dbSampleRows'))]"
+      },
+      {
+        "name": "DB_SAMPLE_VALUE_CHARS",
+        "value": "[string(parameters('dbSampleValueChars'))]"
+      },
+      {
+        "name": "DB_SAMPLE_TOTAL_BYTES",
+        "value": "[string(parameters('dbSampleTotalBytes'))]"
       }
     ]
   },

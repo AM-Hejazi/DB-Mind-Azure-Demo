@@ -14,6 +14,14 @@ def main():
         status = {"profile": settings.profile, "dialect": settings.dialect,
                   "auth": settings.auth, "scope": settings.schemas, "connected": False}
         if args.connect:
+            if settings.profile == 'azure_sql_custom':
+                from .snapshots import read_snapshot
+                from .catalog import target
+                table=next(iter(read_snapshot(settings)['metadata']['tables'].values()))
+                Database(settings).query('SELECT TOP (1) 1 AS connection_probe FROM '+target(table,settings.dialect))
+                status.update(connected=True)
+                print(json.dumps(status,indent=2))
+                return
             rows, _ = Database(settings).query("SELECT COUNT(*) AS equipment_count FROM "
                                                + ("[demo].equipment" if settings.dialect == "sqlserver" else "equipment"))
             status.update(connected=True, equipment_count=rows[0][0])

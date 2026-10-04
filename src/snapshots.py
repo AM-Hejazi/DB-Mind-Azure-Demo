@@ -67,13 +67,15 @@ def identity(settings):
                       fixture_version=VERSION)
     else:
         result.update(server=settings.server.lower(), database=settings.database)
+    if settings.profile == 'azure_sql_custom':
+        result.update(profile=settings.profile, table_scope=list(settings.table_scope))
     return result
 
 
 def policy(settings):
     return {'rows_per_table': settings.sample_rows, 'value_chars': settings.sample_value_chars,
             'total_bytes': settings.sample_total_bytes, 'scan_row_limit': settings.sample_scan_rows,
-            'runtime_seconds': settings.discovery_timeout_seconds, 'ordering': 'random_small_tables'}
+            'runtime_seconds': settings.discovery_timeout_seconds, 'ordering': 'bounded_prefix' if settings.profile == 'azure_sql_custom' else 'random_small_tables'}
 
 
 def metadata_fingerprint(tables, views):
@@ -107,7 +109,7 @@ def read_snapshot(settings, now=None):
             raise SnapshotError('Snapshot exceeds the storage limit')
         snapshot = json.loads(payload)
         if (snapshot.get('format') != 'dbmind.snapshot' or snapshot.get('version') != FORMAT_VERSION
-                or snapshot.get('synthetic_only') is not True):
+                or snapshot.get('synthetic_only') is not (settings.profile != 'azure_sql_custom')):
             raise SnapshotError('Unsupported snapshot; legacy exports must not be reused')
         if snapshot['identity'] != identity(settings) or snapshot['sample_policy'] != policy(settings):
             raise SnapshotError('Snapshot database/scope/sample policy mismatch; refresh explicitly')
@@ -124,7 +126,12 @@ def read_snapshot(settings, now=None):
         extracted = datetime.fromisoformat(snapshot['extracted_at'])
         if extracted.tzinfo is None or not -5 <= (instant - extracted).total_seconds() < settings.snapshot_ttl_seconds:
             raise SnapshotError('Snapshot expired or extraction time invalid; run preflight/refresh')
-        if any(t['schema'] not in settings.schemas or name != t['schema']+'.'+t['name']
+        if not metadata['tables']:
+            raise SnapshotError('Snapshot has no approved tables')
+        if settings.profile == 'azure_sql_custom' and (len(metadata['tables'])>500 or
+            (settings.table_scope and {n.casefold() for n in metadata['tables']} != {n.casefold() for n in settings.table_scope})):
+            raise SnapshotError('Snapshot approved table contract mismatch')
+        if any(t['schema'].casefold() not in {s.casefold() for s in settings.schemas} or name != t['schema']+'.'+t['name']
                for name, t in metadata['tables'].items()):
             raise SnapshotError('Snapshot contains objects outside its configured scope')
         return snapshot

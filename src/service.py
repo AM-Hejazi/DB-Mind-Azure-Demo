@@ -23,6 +23,9 @@ class SessionService:
         self.settings=settings or load_settings()
         self.llm_settings=llm_settings or load_llm_settings()
         self.mode=mode or os.environ.get('APP_LLM_MODE','live')
+        if self.settings.profile == 'azure_sql_custom' and self.mode != 'live':
+            from src.settings import SettingsError
+            raise SettingsError('Custom databases require APP_LLM_MODE=live; fixture mock responses are disabled')
         if self.mode not in {'mock','live'}:
             from src.settings import SettingsError
             raise SettingsError('APP_LLM_MODE must be mock or live')
@@ -116,7 +119,7 @@ class SessionService:
         from src.query_generator import generate_sql_query,extract_final_sql,extract_explanation
         from src.analyzer import analyze_failure
         state=session.state
-        reply,clarified,history=fd_chat_step(state['fd_history'],message,load_schema_text(message),'Bounded synthetic samples only')
+        reply,clarified,history=fd_chat_step(state['fd_history'],message,load_schema_text(message),('Bounded configured database samples' if self.settings.profile == 'azure_sql_custom' else 'Bounded synthetic samples only'))
         state['fd_history']=history[-20:]
         if not clarified:
             self._progress(session,'Clarification needed')

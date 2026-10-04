@@ -125,6 +125,8 @@ def sqlserver_catalog(reader):
         views += reader.records("SELECT s.name+'.'+v.name AS name FROM sys.views v JOIN sys.schemas s ON s.schema_id=v.schema_id WHERE v.is_ms_shipped=0 AND s.name=? ORDER BY v.name", (scope,))
         for obj in reader.records(OBJECTS_SQL, (scope,)):
             full = obj['schema_name'] + '.' + obj['table_name']
+            if reader.settings.table_scope and full.casefold() not in {n.casefold() for n in reader.settings.table_scope}:
+                continue
             identifier = obj['object_id']
             columns = reader.records(COLUMNS_SQL, (identifier,))
             for c in columns:

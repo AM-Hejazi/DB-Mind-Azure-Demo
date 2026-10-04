@@ -64,28 +64,32 @@ void (async () => {
 """
 
 
-def header_html():
+def header_html(custom=False):
     # Fixed, repository-owned asset only. No visitor path or Gradio file route.
     logo=base64.b64encode((ROOT/'data/icon.png').read_bytes()).decode('ascii')
+    subtitle = 'Your configured database / Ihre konfigurierte Datenbank' if custom else 'Synthetic maintenance / Fiktive Instandhaltung'
     return (f'<header class="dbmind-header"><img src="data:image/png;base64,{logo}" alt="DB-Mind">'
             '<div class="dbmind-heading"><h1>DB-Mind</h1>'
-            '<p>Synthetic maintenance / Fiktive Instandhaltung</p></div></header>')
+            f'<p>{subtitle}</p></div></header>')
 
 
 def create_ui(service):
     settings=service.settings
+    custom=settings.profile == "azure_sql_custom"
+    welcome=("Ask about your configured database in English or German. Reset before starting a new question." if custom else WELCOME)
     provider=('Offline fixture responses (no LLM)' if service.mode=='mock' else
               f'DeepSeek · {service.llm_settings.model} · stage overrides configured on server')
-    with gr.Blocks(title='DB Mind · Synthetic maintenance',analytics_enabled=False) as demo:
-        gr.HTML(header_html(),css_template=HEADER_CSS,apply_default_css=False,js_on_load=SESSION_TIMER_JS)
-        gr.Markdown(f'**{provider}** · **{settings.dialect}** · fixed reference: 1 October 2026 UTC\n\n'
+    with gr.Blocks(title='DB Mind' if custom else 'DB Mind · Synthetic maintenance',analytics_enabled=False) as demo:
+        gr.HTML(header_html(custom),css_template=HEADER_CSS,apply_default_css=False,js_on_load=SESSION_TIMER_JS)
+        context_label='configured database' if custom else 'fixed reference: 1 October 2026 UTC'
+        gr.Markdown(f'**{provider}** · **{settings.dialect}** · {context_label}\n\n'
                     f'Read queries only · at most {settings.max_rows:,} rows and {settings.max_bytes:,} result bytes. '
                     'Demo browser visits last up to 30 minutes; configured admin visits have no visit timeout. After expiry, contact the developer for more access. Question allowances apply per visit; reset does not replenish them.')
-        chatbot=gr.Chatbot(value=[{'role':'assistant','content':WELCOME}],
+        chatbot=gr.Chatbot(value=[{'role':'assistant','content':welcome}],
                            label='Conversation / Gespräch',height=340,sanitize_html=True,buttons=['copy'],allow_file_downloads=False)
         status=gr.Markdown('Ready / Bereit',label='Pipeline status')
         with gr.Row():
-            user_input=gr.Textbox(label='Question / Frage',placeholder='Choose an example or ask a maintenance question',
+            user_input=gr.Textbox(label='Question / Frage',placeholder='Ask about your database' if custom else 'Choose an example or ask a maintenance question',
                                   lines=2,max_lines=5,scale=5,max_length=2000)
             send_btn=gr.Button('Send',variant='primary',scale=1)
             reset_btn=gr.Button('New question / Neue Frage',scale=1)
@@ -94,13 +98,14 @@ def create_ui(service):
         with gr.Accordion('Executed SQL / Ausgeführtes SQL',open=False):
             sql=gr.Code(label='Read query',language='sql',interactive=False)
         gr.Markdown('If feedback proposes another query, review it and type **/execute** to confirm. '
-                    'Empty results are successful reads. Live mode sends your question and bounded synthetic '
+                    'Empty results are successful reads. Live mode sends your question and bounded configured '
                     'schema/samples to DeepSeek; mock mode makes no model request.')
         # Bind before examples so private queue callback indexes remain stable.
         elements=dict(user_input=user_input,chatbot=chatbot,status=status,table=table,sql=sql,
                       send_btn=send_btn,reset_btn=reset_btn)
         bind_event_handlers(elements,None,service)
-        with gr.Accordion('Grounded English and German examples',open=True):
-            gr.Examples(examples=[[c[lang]] for c in reference_cases() for lang in ('question_en','question_de')],
-                        inputs=user_input,label='Click to fill the question; then press Send',cache_examples=False,api_visibility='private')
+        if not custom:
+            with gr.Accordion('Grounded English and German examples',open=True):
+                gr.Examples(examples=[[c[lang]] for c in reference_cases() for lang in ('question_en','question_de')],
+                            inputs=user_input,label='Click to fill the question; then press Send',cache_examples=False,api_visibility='private')
     return demo

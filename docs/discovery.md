@@ -23,16 +23,18 @@ schema stable during it: catalog reads are not one transactional database snapsh
 
 ## Metadata scope
 
-SQLite inspects accessible `main` user tables; SQL Server/Azure SQL inspect `demo`.
+SQLite inspects accessible `main` user tables; SQL demos inspect `demo`. The
+custom Azure profile inspects your explicit schemas and optional table subset.
 Metadata includes columns/types, ordered primary and foreign keys, indexes,
 defaults/computed/identity fields where available, and descriptions where present.
 Views are listed separately as unsupported and are not sampled or query targets.
 FK references outside the approved scope do not grant access to those objects.
 
 Visibility is `accessible_objects_only`: hidden objects cannot be enumerated.
-Missing expected fixture tables or read failures produce incomplete extraction;
-an incomplete snapshot cannot authorize runtime reads. The current nine-table
-contract is part of the demo profile, not a general arbitrary-schema connector.
+Missing expected fixture/explicitly selected tables or read failures produce incomplete extraction;
+an incomplete snapshot cannot authorize runtime reads. The nine-table
+contract remains confined to demo profiles. Custom snapshots bind the selected
+profile and table subset to their identity.
 
 ## Sampling policy
 
@@ -46,7 +48,12 @@ contract is part of the demo profile, not a general arbitrary-schema connector.
 | `DB_SNAPSHOT_TTL_SECONDS` | 3,600 | 1–86,400 |
 | `LLM_SCHEMA_CONTEXT_CHARS` | 16,000 | 2,000–32,000 |
 
-A bounded population probe checks eligible table size before sampling. Small tables
+For custom Azure SQL, samples use bounded `TOP (n)` without a count or random
+sort; every selected table is eligible, subject to value/total-byte limits. They
+are examples, not uniform statistical samples. The installation command is
+`python -m src.setup_database --env-file /PRIVATE/PATH/database.env`.
+
+For demo profiles, a bounded population probe checks eligible table size before sampling. Small tables
 use random ordering; tables above the scan threshold are `skipped_large`. Random
 ordering can scan/sort the table: row output limits alone do not bound server work.
 Review thresholds/timeouts for your workload rather than enabling large-table
