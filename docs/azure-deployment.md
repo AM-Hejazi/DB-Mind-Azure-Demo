@@ -1,173 +1,196 @@
-# Azure deployment and operations
+# Deploy DB-Mind with your Azure resources
 
-This demo reuses the existing synthetic Azure SQL database. Do not run a seed,
-recreate the database, overwrite existing firewall rules, or publish private
-configuration. The original repository remains independent of this clean checkout.
+This guide publishes the approved synthetic demonstration to Azure Container Apps
+using your own Azure SQL database, container registry and identity. For a different
+business schema, complete [database adaptation](own-database-setup.md) first;
+changing connection settings alone does not remove the fixture contract.
 
-## Reviewed architecture
+## Prerequisites
 
-- Resource group: `rg-dbmind-demo`; region: `southafricanorth`.
-- Existing SQL: `amirmohsen.database.windows.net`, `dbmind_synthetic_demo`.
-- Basic ACR: `dbminddemo659f6e7f`, admin access disabled.
-- User-assigned identity: `dbmind-demo-runtime`, registry-scoped `AcrPull`.
-- Consumption environment: `dbmind-demo-env`; app: `dbmind-demo`.
-- One 0.5-vCPU/1-GiB replica, HTTPS ingress port 7860, single revision mode.
-- No paid VNet/NAT/private endpoint or retained Log Analytics workspace.
+- An Azure subscription and permission to create the chosen hosting resources.
+- Azure CLI with Container Apps support, Docker, and Python 3.12 with the locked
+  dependencies installed. Sign in with `az login` and select your subscription.
+- A dedicated Azure SQL test database named `dbmind_synthetic_...`, seeded with the
+  [fixture](synthetic-data.md), plus a separate restricted reader. Review SQL
+  firewall/network access yourself; hosting deployment does not change SQL rules.
+- A private DeepSeek key for the included deployer (also required when deploying
+  mock mode), separate application login credentials, and optionally admin access.
 
-The existing `AllowAllWindowsAzureIps` SQL rule is `0.0.0.0`–`0.0.0.0`, meaning
-Azure-service connections from other tenants are network-admitted too. It is not
-an all-internet `0.0.0.0`–`255.255.255.255` rule. This deployment preserves it and
-all existing operator rules. Database authentication and effective read-only
-permission checks remain required. For stricter network isolation, separately
-budget and design a stable NAT egress allowlist or private endpoint; do not use
-the Container Apps inbound IP as an outbound address.
+Managed identity for pulling an image is separate from SQL data access. For
+SQL managed identity authentication, an authorized database owner must provision
+the identity as a contained user and add it to `dbmind_demo_reader`; see
+[configuration](configuration.md). SQL-password mode needs a restricted contained
+user and its password supplied privately.
 
-## Tools and initial infrastructure
+## Create hosting infrastructure
 
-Install the official Azure CLI, Docker, and Python 3.12. Sign in with `az login`,
-verify `az account show`, and select the intended subscription. Device flow can
-be blocked by Entra security defaults; use browser authentication and MFA.
-Review existing resources/names before creating anything. For a new demo group
-configuration, adjust the names/region deliberately; never overwrite unrelated apps.
+Choose globally unique registry names, your supported Azure region, and dedicated
+resource names. The commands below create billable resources; review your Azure
+pricing and budget before running them. Existing resources can be reused instead.
 
 ```bash
+export DBMIND_GROUP=YOUR_RESOURCE_GROUP
+export DBMIND_REGION=YOUR_AZURE_REGION
+export DBMIND_REGISTRY=YOUR_UNIQUE_REGISTRY_NAME
+export DBMIND_ENVIRONMENT=YOUR_CONTAINER_APPS_ENVIRONMENT
+export DBMIND_IDENTITY=YOUR_IMAGE_PULL_IDENTITY
+export DBMIND_APP=YOUR_CONTAINER_APP_NAME
+
+az group create --name "$DBMIND_GROUP" --location "$DBMIND_REGION"
 az provider register --namespace Microsoft.App
 az provider register --namespace Microsoft.ContainerRegistry
 az provider register --namespace Microsoft.ManagedIdentity
-az extension add --name containerapp
-az acr create -g rg-dbmind-demo -n dbminddemo659f6e7f -l southafricanorth --sku Basic --admin-enabled false
-az identity create -g rg-dbmind-demo -n dbmind-demo-runtime -l southafricanorth
-az containerapp env create -g rg-dbmind-demo -n dbmind-demo-env -l southafricanorth --logs-destination none --enable-workload-profiles true
+az extension add --name containerapp --upgrade
+az acr create --resource-group "$DBMIND_GROUP" --name "$DBMIND_REGISTRY" \
+  --location "$DBMIND_REGION" --sku Basic --admin-enabled false --role-assignment-mode rbac
+az identity create --resource-group "$DBMIND_GROUP" --name "$DBMIND_IDENTITY" \
+  --location "$DBMIND_REGION"
+az containerapp env create --resource-group "$DBMIND_GROUP" \
+  --name "$DBMIND_ENVIRONMENT" --location "$DBMIND_REGION" \
+  --logs-destination none --enable-workload-profiles true
+
+DBMIND_REGISTRY_ID=$(az acr show -g "$DBMIND_GROUP" -n "$DBMIND_REGISTRY" --query id -o tsv)
+DBMIND_PULL_PRINCIPAL=$(az identity show -g "$DBMIND_GROUP" -n "$DBMIND_IDENTITY" --query principalId -o tsv)
+az role assignment create --assignee-object-id "$DBMIND_PULL_PRINCIPAL" \
+  --assignee-principal-type ServicePrincipal --role AcrPull --scope "$DBMIND_REGISTRY_ID"
 ```
 
-Assign only `AcrPull`, scoped to this registry, to the identity's principal ID.
-Existing infrastructure does not need to be recreated for updates.
+The registry setup uses standard RBAC with registry-scoped `AcrPull`; use the
+appropriate repository role if you deliberately choose an ABAC-enabled registry;
+see [Azure registry role guidance](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-rbac-built-in-roles-overview).
+No SQL resources or firewall rules are created by these hosting commands.
 
-## Build, audit, push, deploy
+## Prepare private deployment configuration
 
-Keep `~/dbmind-azure.env` private and outside the checkout. It uses Docker
-`KEY=value` syntax and contains the restricted SQL credentials, APP_AUTH (or
-APP_USERNAME/APP_PASSWORD), and DEEPSEEK_API_KEY. No credentials belong in build
-arguments, Dockerfiles, public parameters, screenshots, source, or shell history.
+Store a private Docker-style `KEY=value` file outside the repository, for example
+`$HOME/.config/dbmind/deployment.env`, with file mode 0600. Use `.env.example` and
+[database settings](configuration.md) as a reference, replacing the local profile
+rather than adding conflicting settings.
+
+Set `DB_PROFILE=azure_sql`, `DB_DIALECT=sqlserver`, your server/database, scope
+`demo`, an ignored snapshot path, `DB_DISCOVERY_TIMEOUT_SECONDS=300`, and explicit
+`DB_AUTH`. For SQL-password auth, provide restricted `DB_USER`/`DB_PASSWORD`.
+For token auth, leave them unset. Leave `DB_SQLITE_PATH` unset for Azure.
+Include `APP_USERNAME`/`APP_PASSWORD` or `APP_AUTH`, and `DEEPSEEK_API_KEY`.
+Optional `APP_ADMIN_USERNAME`/`APP_ADMIN_PASSWORD` configure a separate operator login.
+Do not put values into shell history, screenshots or public parameter files.
+
+The included template deliberately sets fixed safe deployment defaults: one
+0.5-vCPU/1-GiB replica, HTTPS on port 7860, one revision, and bounded startup probes.
+The deployer reads database/authentication/model validation from the private file;
+**it does not forward every env-file option to Azure**. Review
+`infra/container-app.json` for supported environment entries before customizing
+sample limits, quotas or stage models. Add only public settings or secret references
+there, never secret values.
+
+## Test, build and publish
 
 ```bash
-python -m scripts.audit_public --private-env "$HOME/dbmind-azure.env"
-GRADIO_ANALYTICS_ENABLED=False HF_HUB_OFFLINE=1 APP_LLM_MODE=mock python -B -m unittest discover -s tests -q
-git status --short
-# Commit the audited source before building.
+python -m scripts.audit_public --private-env "$HOME/.config/dbmind/deployment.env"
+GRADIO_ANALYTICS_ENABLED=False HF_HUB_OFFLINE=1 APP_LLM_MODE=mock \
+  python -B -m unittest discover -s tests -q
+# Commit the reviewed source before building.
 DBMIND_COMMIT=$(git rev-parse HEAD)
-docker build --platform linux/amd64 --target azure --label org.opencontainers.image.revision="$DBMIND_COMMIT" -t dbmind:azure-demo .
-az acr login --name dbminddemo659f6e7f
-docker tag dbmind:azure-demo "dbminddemo659f6e7f.azurecr.io/dbmind:$DBMIND_COMMIT"
-docker push "dbminddemo659f6e7f.azurecr.io/dbmind:$DBMIND_COMMIT"
-DBMIND_DIGEST=$(az acr repository show -n dbminddemo659f6e7f --image "dbmind:$DBMIND_COMMIT" --query digest -o tsv)
-python -m scripts.deploy_azure --resource-group rg-dbmind-demo \
-  --registry dbminddemo659f6e7f --environment dbmind-demo-env \
-  --identity dbmind-demo-runtime --source-commit "$DBMIND_COMMIT" \
-  --image "dbminddemo659f6e7f.azurecr.io/dbmind@$DBMIND_DIGEST" --mode mock
+DBMIND_LOGIN_SERVER=$(az acr show -g "$DBMIND_GROUP" -n "$DBMIND_REGISTRY" --query loginServer -o tsv)
+docker build --platform linux/amd64 --target azure \
+  --label org.opencontainers.image.revision="$DBMIND_COMMIT" -t dbmind:azure .
+az acr login --name "$DBMIND_REGISTRY"
+docker tag dbmind:azure "$DBMIND_LOGIN_SERVER/dbmind:$DBMIND_COMMIT"
+docker push "$DBMIND_LOGIN_SERVER/dbmind:$DBMIND_COMMIT"
+DBMIND_DIGEST=$(az acr repository show -n "$DBMIND_REGISTRY" \
+  --image "dbmind:$DBMIND_COMMIT" --query digest -o tsv)
+
+python -m scripts.deploy_azure \
+  --env-file "$HOME/.config/dbmind/deployment.env" \
+  --resource-group "$DBMIND_GROUP" --registry "$DBMIND_REGISTRY" \
+  --environment "$DBMIND_ENVIRONMENT" --identity "$DBMIND_IDENTITY" \
+  --app "$DBMIND_APP" --source-commit "$DBMIND_COMMIT" \
+  --image "$DBMIND_LOGIN_SERVER/dbmind@$DBMIND_DIGEST" \
+  --db-auth sql_password --mode mock
 ```
 
-The checked-in ARM template declares credentials as `securestring` parameters.
-The Python deployer reads the private file in memory and submits it over HTTPS
-with the signed-in CLI token; no plaintext parameter file is created. Azure
-stores application authentication, DeepSeek key, and optional restricted SQL
-password as app secrets referenced by environment entries. Registry access uses
-managed identity. Do not run CLI/debug HTTP tracing on this secret-bearing request.
+Use `--db-auth managed_identity` after provisioning SQL access for the identity.
+The deployment script applies the template to the selected existing hosting
+resources, including configured secrets; it never seeds SQL or changes its users,
+roles or firewall. Securestring parameters are sent over authenticated HTTPS from
+memory, without a plaintext parameter file. Do not enable debug HTTP tracing.
 
-Azure settings are explicit: APP_HOST=0.0.0.0; DB_PROFILE=azure_sql;
-DB_DIALECT=sqlserver; DB_SCHEMA_SCOPE=demo; DB_DISCOVERY_TIMEOUT_SECONDS=300;
-DB_SQLITE_PATH absent. The same image supports mock and live mode.
+Record the source commit and immutable image digest privately for rollback.
+For live model access, rerun with `--mode live` only after mock acceptance. Live
+questions incur provider charges and send bounded database context externally.
 
-## Startup allowance and acceptance
+## Startup and acceptance
 
-`app.py` performs at most three 300-second discovery attempts with two ten-second
-retry delays: **920 seconds**, plus initialization overhead. The Azure HTTP Startup
-probe uses period 30 seconds and failureThreshold 40, providing approximately
-**1,200 seconds**. This is a Container Apps probe configuration, independent of
-Docker's HEALTHCHECK grace period. Readiness uses `/health/ready`; liveness uses
-`/health/live`. Neither recurring endpoint calls SQL or a model.
-
-Run inside the deployed Container App (CLI opens an authenticated terminal):
+Startup runs schema preflight; it never seeds the database. Discovery may take
+several minutes. The app allows up to three 300-second attempts with two ten-second
+retry delays; the Azure startup probe allows about 1,200 seconds. Health endpoints
+use in-memory startup state and do not continuously query SQL or the model.
 
 ```bash
-az containerapp exec -g rg-dbmind-demo -n dbmind-demo --command /bin/sh
-# In the container:
+az containerapp exec -g "$DBMIND_GROUP" -n "$DBMIND_APP" --command /bin/sh
+# In the container, using its existing restricted environment:
 python -m src.discovery preflight
+python -m src.discovery inspect
 python -m src.db_check --connect
-python -m src.runtime_diagnostics --negative-checks
 ```
 
-Diagnostics are an explicit trusted read-only operator path, not a visitor API.
-They retain the runtime guard and verify EngineEdition=5, the current database,
-reader membership, nine tables, complete metadata/sampling, and equipment count60.
-Do not weaken the visitor SQL gate to run identity diagnostics.
-
-Verify HTTPS readiness200, anonymous application/config401, protected file routes,
-and an authenticated synthetic reference answer in mock mode. Then redeploy the
-same digest using `--mode live` and run one small authorized UI reference question.
-Compare its result with `data/synthetic/v1/reference-cases.json`. Live mode incurs
-DeepSeek charges; do not run historical evaluation loops as smoke tests.
-
-For optional browser acceptance, install Playwright separately from the runtime:
+Expect nine tables, a complete snapshot and equipment count 60 for the approved
+fixture. Check `/health/ready` returns 200, anonymous `/config` returns 401,
+authenticated UI access works, and file routes remain blocked. Test a reference
+question and a reviewed follow-up. Optional Playwright acceptance:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m playwright install chromium
-python -m scripts.hosted_smoke --url https://YOUR-APP.azurecontainerapps.io --mode mock
+python -m scripts.hosted_smoke --env-file "$HOME/.config/dbmind/deployment.env" \
+  --url https://YOUR_APP_HOST --mode mock
 ```
 
-On Linux, install the browser's system dependencies if prompted. After switching
-to live mode, `--mode live` submits one reference
-question and at most two clarification/confirmation follow-ups. It compares the
-actual CSV result export and captures desktop/mobile screenshots. Credentials are
-read from the private environment file in memory; never put them in the URL.
+Browser system dependencies may also be needed. The live smoke mode submits a
+bounded paid reference conversation; it is an explicit opt-in check.
 
-## Optional managed-identity SQL transition
+## Rotate an application password
 
-The initial deployment uses the existing restricted `dbmind_demo_runtime` SQL
-user via a secret. Azure management ownership alone does not grant SQL access.
-The server initially has no Entra administrator. An owner must configure an
-appropriate Entra administrator and execute this as that administrator in
-`dbmind_synthetic_demo`:
+Update the relevant Container App secret in Azure Portal. `private-auth` contains
+`username:password` pairs for ordinary users; `admin-password` contains only the
+separate admin password. Changing a secret does not itself create a new revision.
+Restart each active revision referencing it so its process receives the new value.
+No Docker build or image push is needed for a password-only update.
 
-```sql
-CREATE USER [dbmind-demo-runtime] FROM EXTERNAL PROVIDER
-  WITH OBJECT_ID = 'f6d0de6c-5ebe-4540-b10c-d558528ac7f6';
-ALTER ROLE [dbmind_demo_reader] ADD MEMBER [dbmind-demo-runtime];
+```bash
+az containerapp revision list -g "$DBMIND_GROUP" -n "$DBMIND_APP" \
+  --query "[?properties.active].name" -o tsv
+az containerapp revision restart -g "$DBMIND_GROUP" -n "$DBMIND_APP" \
+  --revision YOUR_ACTIVE_REVISION_NAME
 ```
 
-Identity client ID: `76644597-f9bc-4718-bbd6-2f18c8c557c0`. Grant no broader roles.
-After provisioning, repeat deployment with `--db-auth managed_identity`; the
-container omits SQL credentials and explicitly requests this managed identity.
-Verify inside the deployed app before declaring the transition complete. Do not
-send an administrator password in chat or put it in the application environment.
+Alternatively, use Portal → Container App → Revision management → active revision
+→ Restart. Restart invalidates existing in-memory visits; use a fresh private
+browser window to sign in again. Keep your private deployment env file synchronized:
+the full deployer reapplies its secrets and can otherwise restore an older password.
+[Azure secret lifecycle](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets)
+describes restart/new-revision requirements.
 
-## Cost and troubleshooting
+## Code updates, rollback and troubleshooting
 
-Current South Africa North USD retail estimates, 3 October 2026, before taxes,
-account discounts, and DeepSeek: Basic ACR $0.1666/day (~$5 per 30 days); a constant
-0.5-vCPU/1-GiB Consumption replica roughly $10 idle to $33.48 active per 30 days
-when monthly free allowances remain available. Combined hosting is approximately
-$15–39/month. Actual active/idle metering determines the bill; these are estimates,
-not a spending cap. [Official retail-price API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)
-and [Container Apps billing](https://learn.microsoft.com/en-us/azure/container-apps/billing)
-explain rates/allowances. Additional registry storage and internet egress can add cost.
+For code changes, test and build/push a new immutable image, then deploy it. If only
+the image changes and you want to preserve current Portal-managed secrets, use:
 
-Existing SQL has useFreeLimit=true and freeLimitExhaustionBehavior=AutoPause. Its
-free offer avoids compute charges within that allowance but pauses at exhaustion;
-confirm the owner's actual eligibility/balance. Non-free Gen5 serverless retail
-compute is $0.699156/vCore-hour in this region, plus storage/backup if applicable.
-We do not change SQL's tier, pause, or free-offer configuration. No paid log store,
-NAT, private endpoint, or dedicated workload profile is added.
+```bash
+az containerapp update -g "$DBMIND_GROUP" -n "$DBMIND_APP" \
+  --image YOUR_REGISTRY/dbmind@sha256:YOUR_IMAGE_DIGEST
+```
 
-503 startup: inspect safe console logs, SQL pause/allowance, Driver18, permissions,
-and discovery deadline. Anonymous401 is expected. SQL/TLS/auth/permission errors
-fail closed; there is no SQLite fallback. Readiness remains a startup flag after
-initialization, so SQL can pause later without changing that endpoint. Quotas and
-sessions are memory-local; replicas/processes must remain one.
+This creates a revision without reapplying env-file passwords. Roll back by updating
+to a previously recorded compatible digest. Documentation-only changes do not
+require an app rebuild.
 
-For updates, rerun audit/tests, commit, build/push a new immutable digest, deploy,
-and verify. Rollback redeploys a previously recorded digest with matching source.
-Do not delete the resource group to stop hosting: it contains the preserved SQL
-server/database. Review and remove only the new app/environment/registry/identity
-if teardown is required. Credentials and provider billing caps remain owner controls.
+For startup 503, inspect logs privately, SQL availability, ODBC installation,
+network reachability and restricted-reader permissions. Do not paste raw logs or
+credentials into public issues. Readiness is a startup flag: SQL can become unavailable
+later without changing it. The app fails closed rather than selecting another DB.
+
+Run one process/replica because visits and quotas are memory-local. Review Azure
+budgets, SQL capacity/free-offer exhaustion and provider billing controls yourself;
+application quotas are not dollar spending caps. Teardown only resources you own
+and intend to remove; a resource group may also contain a database you need to retain.
