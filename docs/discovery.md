@@ -17,7 +17,11 @@ python -m src.discovery preflight
 sibling lexical `.index.json`. `inspect` validates the local snapshot and prints
 counts/statuses without rows or credentials. `preflight` checks the cache against
 current catalog metadata, refreshing when missing, expired, changed or invalid.
-Startup runs preflight too. SQL profiles use network/authentication for refresh
+Startup runs preflight too. Before each authenticated chat operation, the server
+validates the cache and renews expired or invalid context using the restricted
+database adapter. Renewal stays within the discovery and question deadlines,
+honors cancellation and visit limits, and must produce a complete valid snapshot
+before the agents proceed. Agents themselves never start discovery. SQL profiles use network/authentication for refresh
 and preflight; inspect is local. Run extraction after schema changes and keep
 schema stable during it: catalog reads are not one transactional database snapshot.
 
