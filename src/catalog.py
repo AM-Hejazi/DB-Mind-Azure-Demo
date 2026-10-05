@@ -17,12 +17,16 @@ def target(table, dialect):
 
 class Reader:
     """Trusted catalog reader; bounds each operation by remaining refresh time."""
-    def __init__(self, settings, deadline=None, database_factory=Database):
+    def __init__(self, settings, deadline=None, database_factory=Database, *, before_query=None, cancelled=None):
         self.settings = settings
         self.deadline = deadline if deadline is not None else time.monotonic() + settings.discovery_timeout_seconds
         self.database_factory = database_factory
+        self.before_query = before_query
+        self.cancelled = cancelled
 
     def query(self, sql, parameters=()):
+        if self.before_query is not None:
+            self.before_query()
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise DatabaseError('timeout', 'Discovery deadline reached.')
@@ -31,7 +35,10 @@ class Reader:
                            connect_timeout=min(self.settings.connect_timeout, seconds),
                            query_timeout=min(self.settings.query_timeout, seconds), max_rows=10000,
                            max_bytes=2 * 1024 * 1024)
-        return self.database_factory(settings).query(sql, parameters, metadata=True)
+        options = {'metadata': True}
+        if self.cancelled is not None:
+            options['cancelled'] = self.cancelled
+        return self.database_factory(settings).query(sql, parameters, **options)
 
     def records(self, sql, parameters=()):
         rows, columns = self.query(sql, parameters)

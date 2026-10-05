@@ -17,8 +17,15 @@ profiles are available; PostgreSQL/MySQL connectors and view/procedure execution
 are not included.
 
 [Hosted demonstration](https://dbmind-demo.lemonflower-af0fa12b.southafricanorth.azurecontainerapps.io)
-requires an invited account. To run an independent deployment, use your own Azure
-subscription, resources, database identity and secrets.
+uses the fictional maintenance database. Recruiters and developers can try it
+with the **demo account supplied with their invitation**; no Azure subscription
+or database setup is needed. The operator's separate **admin account** uses the
+same sample database and has no fixed visit timeout. Admin credentials are private.
+
+To connect your own database, clone this repository and follow the installation
+and deployment guides using your own Azure subscription, database reader and
+secrets. The hosted demonstration does not accept visitors' database credentials
+or switch to their databases.
 
 ## Architecture
 
@@ -27,6 +34,7 @@ flowchart LR
     User[Authenticated user] --> FD[Front Desk: clarify]
     DB[(Configured SQL database)] --> Discovery[Explicit schema and bounded sample extraction]
     Discovery --> Cache[Validated local snapshot]
+    Renewal[Server: renew expired context before chat] --> Discovery
     Cache --> FD
     FD --> SR[Schema Retriever]
     Cache --> SR
@@ -122,6 +130,11 @@ For a separate application admin, configure `APP_ADMIN_USERNAME` and
 individual question/model allowance, but keep the global spending cap, per-question
 budgets, HTTP rate limits and SQL protections. Admin access grants no database
 administration privileges. See [access configuration](docs/safety.md).
+
+The server checks schema context before each chat operation and renews expired
+context through the restricted database reader. A long-running deployment does
+not require hourly restarts. Renewal retains all query, identity and access guards;
+an unavailable database stops processing safely.
 
 For password-only Azure secret updates, restart active revisions; no image rebuild
 is needed. Keep the private deployment env file synchronized before using the full

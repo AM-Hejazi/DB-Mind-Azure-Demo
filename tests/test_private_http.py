@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import importlib.util
 import os
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -19,8 +20,16 @@ class PrivateHTTPTests(unittest.IsolatedAsyncioTestCase):
         import httpx
         from app import create_secure_app
         from src.access import AccessPolicy,load_access_settings
+        from src.settings import load_settings
+        from src.discovery import refresh
+        from synthetic_demo.seed import seed_sqlite
+        root=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        settings=load_settings({'DB_SQLITE_PATH':str(root/'fixture.sqlite3'),
+                                'DB_SCHEMA_JSON':str(root/'schema.json')})
+        seed_sqlite(settings.sqlite_path)
+        refresh(settings)
         self.policy=AccessPolicy(load_access_settings({'APP_AUTH':'alice:offline-password-a,bob:offline-password-b'}))
-        self.app=create_secure_app(self.policy)
+        self.app=create_secure_app(self.policy,settings=settings)
         self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app),base_url='https://private-test')
         self.addAsyncCleanup(self.client.aclose)
         self.enterContext(patch('src.llm_client.LLMClient._factory',side_effect=AssertionError('Unexpected provider call')))

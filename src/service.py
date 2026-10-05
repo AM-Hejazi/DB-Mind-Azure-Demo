@@ -9,6 +9,7 @@ from src.llm_client import new_budget, use_budget, LLMError
 from src.logger import use_logger, redact
 from src.settings import load_settings
 from src.sql_gate import prepare_read, SQLGateError
+from src.snapshots import SnapshotError, read_snapshot
 
 
 def display(text):
@@ -87,6 +88,30 @@ class SessionService:
         try:return self._advance(request,progress=progress)
         finally:self.policy.operations.release()
 
+    def _ensure_schema(self,session):
+        """Refresh invalid context at the authenticated, serialized server boundary."""
+        self.policy.allowance_key(session.owner,session.visitor)
+        budget=session.state['llm_budget']
+        budget.remaining()
+        try:
+            read_snapshot(self.settings)
+            return
+        except SnapshotError:
+            pass
+        self._progress(session,'Refreshing database context')
+        from src.catalog import Reader
+        from src.discovery import refresh
+        import time
+        def check():
+            self.policy.allowance_key(session.owner,session.visitor)
+            budget.remaining()
+        reader=Reader(self.settings,
+            deadline=time.monotonic()+min(self.settings.discovery_timeout_seconds,budget.remaining()),
+            database_factory=self.database_factory,before_query=check,cancelled=budget.cancellation)
+        refresh(self.settings,reader)
+        check()
+        read_snapshot(self.settings)
+
     def _advance(self,request,*,progress=None):
         session=self.session(request)
         with self.operation(session):
@@ -97,11 +122,17 @@ class SessionService:
             message=state.pop('pending_message')
             with use_budget(state['llm_budget']):
                 try:
+                    self._ensure_schema(session)
                     if self.mode=='mock':
                         self._mock_answer(session,message)
                     elif state.get('finished'):
                         self._feedback(session,message)
                     else:self._answer(session,message)
+                except SnapshotError:
+                    self._progress(session,'Database context unavailable')
+                    session.logger.log('Database context unavailable','snapshot')
+                    session.history.append({'role':'assistant','content':
+                        'Database context could not be refreshed. Please contact the operator; a narrower question will not resolve this.'})
                 except (DatabaseError,SQLGateError,LLMError,AccessError) as error:
                     self._progress(session,'Operation stopped')
                     session.logger.log('Operation stopped',getattr(error,'code','policy'))
